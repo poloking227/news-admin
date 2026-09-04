@@ -1,0 +1,895 @@
+openapi: "3.1.0"
+info:
+  title: news-admin API
+  version: 1.0.0
+  description: |
+    新闻管理系统接口契约。
+
+    - 基路径 `/api/v1`；管理端端点前缀 `/admin`（需认证），公共端点前缀 `/public`（匿名只读）。
+    - 时间统一为 UTC ISO8601；标识符为 UUID v4 字符串。
+    - 统一错误信封：`{"error": {"code": "<string>", "message": "<human msg>", "details": {}}}`。
+    - 分页：`page`（≥1，默认 1）、`pageSize`（1-100，默认 10）；响应 `{items, total, page, pageSize}`。
+    - 列表排序规则：置顶优先（pinned desc）+ 发布时间倒序（publishedAt desc）。
+    - 公共侧仅返回 `published` 且未删除的内容；其余状态（draft/pending_review/unpublished/已删除）在任何入口（列表、分类、搜索、直连详情）均不可见，详情一律 404 防枚举。
+    - 会话：access token（1h）放请求头 `Authorization: Bearer`；refresh token（7d）为 HttpOnly cookie；首登强制改密见 `/auth/change-password`。
+servers:
+  - url: http://localhost:8080/api/v1
+    description: 本地开发
+tags:
+  - name: auth
+    description: 认证与会话
+  - name: admin-articles
+    description: 管理端文章（含审核流转）
+  - name: admin-categories
+    description: 管理端分类
+  - name: admin-users
+    description: 管理端用户
+  - name: admin-audit-logs
+    description: 管理端审计查询
+  - name: public
+    description: 公共只读端点
+security:
+  - bearerAuth: []
+paths:
+  /auth/login:
+    post:
+      tags: [auth]
+      summary: 登录
+      operationId: login
+      description: 按账号密码登录；失败进行限流（5 次/分钟/IP + 10 次/15 分钟/账号）并写审计。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LoginRequest" }
+      responses:
+        "200":
+          description: 登录成功；refresh token 写入 HttpOnly cookie（SameSite=Strict，Path=/api/v1/auth）。
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LoginResponse" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+  /auth/refresh:
+    post:
+      tags: [auth]
+      summary: 刷新访问令牌
+      operationId: refresh
+      description: 使用 refresh cookie 旋转访问令牌；端点要求 `X-CSRF-Token`（登录时下发的双提交值）。
+      responses:
+        "200":
+          description: 刷新成功（新 access token 与新 refresh cookie）。
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LoginResponse" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /auth/logout:
+    post:
+      tags: [auth]
+      summary: 登出
+      operationId: logout
+      description: 吊销当前 refresh 族。
+      responses:
+        "204": { description: 登出成功 }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /auth/change-password:
+    post:
+      tags: [auth]
+      summary: 修改密码
+      operationId: changePassword
+      description: |
+        修改本人密码。首登强制改密（M0）：`mustChangePassword=true` 时本端点、`/auth/me`、`/auth/logout` 为唯一放行端点，其余管理端点一律 403；
+        成功后清除标记并写 passwordChangedAt，吊销现有 refresh 族（需重新登录）；动作落审计。
+        以初始/临时口令开通的账号（预置管理员、新建用户、管理员重置密码）一律要求首登改密。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ChangePasswordRequest" }
+      responses:
+        "204": { description: 修改成功，需重新登录 }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+  /auth/me:
+    get:
+      tags: [auth]
+      summary: 当前用户
+      operationId: me
+      description: 返回当前用户信息、权限点与强制改密标记；强制改密期间唯一放行的读端点。
+      responses:
+        "200":
+          description: 当前用户
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CurrentUser" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /admin/articles:
+    get:
+      tags: [admin-articles]
+      summary: 文章列表（管理端）
+      operationId: adminListArticles
+      description: |
+        过滤：status/categoryId/keyword/pinned。可见性按角色：
+        editor 可见自有全部非删除内容（draft/pending_review/unpublished，含已驳回待修改）+ 全部 published；reviewer 与 admin 可见全部；不含软删内容。
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: status, in: query, schema: { $ref: "#/components/schemas/ArticleStatus" } }
+        - { name: categoryId, in: query, schema: { type: string, format: uuid } }
+        - { name: keyword, in: query, schema: { type: string } }
+        - { name: pinned, in: query, schema: { type: boolean } }
+        - { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
+        - { name: pageSize, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 10 } }
+      responses:
+        "200":
+          description: 分页文章列表
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ArticlePage" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      tags: [admin-articles]
+      summary: 创建草稿
+      operationId: adminCreateArticle
+      security: [{ bearerAuth: [] }]
+      description: 创建即置为 draft；categoryId 必填（必选单选）。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ArticleCreateRequest" }
+      responses:
+        "201":
+          description: 创建成功
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Article" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /admin/articles/{id}:
+    get:
+      tags: [admin-articles]
+      summary: 文章详情（管理端）
+      operationId: adminGetArticle
+      description: 按可见性口径返回；越权 403/404。
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: 文章
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Article" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      tags: [admin-articles]
+      summary: 更新文章
+      operationId: adminUpdateArticle
+      description: 仅 draft（含已驳回）可编辑；乐观锁使用 `If-Match`（version）。
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: If-Match, in: header, schema: { type: string }, description: 乐观锁版本头 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ArticleUpdateRequest" }
+      responses:
+        "200":
+          description: 更新成功
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Article" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+    delete:
+      tags: [admin-articles]
+      summary: 软删文章
+      operationId: adminDeleteArticle
+      description: 仅置 deletedAt + 审计；editor 仅可删自有草稿（含已驳回）；已发布禁止直接删。
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "204": { description: 删除成功 }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /admin/articles/{id}/submit:
+    post:
+      tags: [admin-articles]
+      summary: 提交审核
+      operationId: adminSubmitArticle
+      description: draft（含已驳回）| unpublished → pending_review（多态覆盖，无独立直发端点）；服务端校验 title/summary/bodyHtml/categoryId 齐全；非法迁移 409。
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: 进入待审核
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Article" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+  /admin/articles/{id}/approve:
+    post:
+      tags: [admin-articles]
+      summary: 审核通过（即发布）
+      operationId: adminApproveArticle
+      description: pending_review → published；写 publishedAt；无独立发布动作（审核通过即发布）。
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: 已发布
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Article" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /admin/articles/{id}/reject:
+    post:
+      tags: [admin-articles]
+      summary: 驳回回草稿
+      operationId: adminRejectArticle
+      description: pending_review → draft；reason 必填（≤500），写 rejectReason 与 rejectedAt（驳回时间），保留最近一次理由；动作落审计。
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RejectRequest" }
+      responses:
+        "200":
+          description: 已驳回
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Article" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /admin/articles/{id}/unpublish:
+    post:
+      tags: [admin-articles]
+      summary: 下架
+      operationId: adminUnpublishArticle
+      description: published → unpublished；reason 可选（≤500）；写 unpublishedAt。
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UnpublishRequest" }
+      responses:
+        "200":
+          description: 已下架
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Article" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /admin/articles/{id}/pin:
+    put:
+      tags: [admin-articles]
+      summary: 置顶/取消置顶
+      operationId: adminPinArticle
+      description: 置顶优先排序依据；M0 由审核员与管理员设置。
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PinRequest" }
+      responses:
+        "200":
+          description: 更新成功
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Article" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/categories:
+    get:
+      tags: [admin-categories]
+      summary: 分类列表（管理端）
+      operationId: adminListCategories
+      security: [{ bearerAuth: [] }]
+      description: 含文章数；不含软删分类。
+      responses:
+        "200":
+          description: 分类列表
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Category" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      tags: [admin-categories]
+      summary: 创建分类
+      operationId: adminCreateCategory
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CategoryCreateRequest" }
+      responses:
+        "201":
+          description: 创建成功
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Category" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /admin/categories/{id}:
+    put:
+      tags: [admin-categories]
+      summary: 更新分类
+      operationId: adminUpdateCategory
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CategoryUpdateRequest" }
+      responses:
+        "200":
+          description: 更新成功
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Category" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      tags: [admin-categories]
+      summary: 软删分类
+      operationId: adminDeleteCategory
+      description: 存在已发布文章时 409，需先迁移文章。
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "204": { description: 删除成功 }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /admin/users:
+    get:
+      tags: [admin-users]
+      summary: 用户列表
+      operationId: adminListUsers
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: role, in: query, schema: { $ref: "#/components/schemas/Role" } }
+        - { name: status, in: query, schema: { $ref: "#/components/schemas/UserStatus" } }
+        - { name: keyword, in: query, schema: { type: string } }
+        - { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
+        - { name: pageSize, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 10 } }
+      responses:
+        "200":
+          description: 分页用户列表
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UserPage" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      tags: [admin-users]
+      summary: 创建用户
+      operationId: adminCreateUser
+      description: 新建用户以临时口令开通，mustChangePassword=true（首登强制改密，同规则）。
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UserCreateRequest" }
+      responses:
+        "201":
+          description: 创建成功
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/User" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/users/{id}:
+    put:
+      tags: [admin-users]
+      summary: 更新用户
+      operationId: adminUpdateUser
+      description: 修改展示名/角色；禁止停用或降级自己。
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UserUpdateRequest" }
+      responses:
+        "200":
+          description: 更新成功
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/User" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /admin/users/{id}/status:
+    patch:
+      tags: [admin-users]
+      summary: 启用/停用用户
+      operationId: adminSetUserStatus
+      description: 禁止停用自己；停用后其会话即时失效。
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UserStatusUpdateRequest" }
+      responses:
+        "200":
+          description: 更新成功
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/User" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/users/{id}/reset-password:
+    post:
+      tags: [admin-users]
+      summary: 重置密码
+      operationId: adminResetUserPassword
+      description: 生成临时口令并返回；被重置用户 mustChangePassword=true（首登强制改密）；撤销其现有会话；动作落审计。
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: 返回临时口令
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [temporaryPassword]
+                properties:
+                  temporaryPassword: { type: string, description: 一次性临时口令，仅此响应返回 }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/audit-logs:
+    get:
+      tags: [admin-audit-logs]
+      summary: 审计日志查询
+      operationId: adminListAuditLogs
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: actorId, in: query, schema: { type: string, format: uuid } }
+        - { name: action, in: query, schema: { $ref: "#/components/schemas/AuditAction" } }
+        - { name: resourceType, in: query, schema: { type: string } }
+        - { name: resourceId, in: query, schema: { type: string, format: uuid } }
+        - { name: from, in: query, schema: { type: string, format: date-time } }
+        - { name: to, in: query, schema: { type: string, format: date-time } }
+        - { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
+        - { name: pageSize, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 10 } }
+      responses:
+        "200":
+          description: 分页审计记录
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuditLogPage" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /public/articles:
+    get:
+      tags: [public]
+      summary: 浏览端文章列表
+      operationId: publicListArticles
+      description: 仅 published 且未删除；排序置顶优先 + 发布时间倒序；分类筛选。
+      security: []
+      parameters:
+        - { name: categoryId, in: query, schema: { type: string, format: uuid } }
+        - { name: keyword, in: query, schema: { type: string } }
+        - { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
+        - { name: pageSize, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 10 } }
+      responses:
+        "200":
+          description: 分页公共文章
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ArticlePublicPage" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+  /public/articles/{id}:
+    get:
+      tags: [public]
+      summary: 浏览端文章详情
+      operationId: publicGetArticle
+      description: 仅 published；draft/pending_review/unpublished/已删除 一律 404（不暴露存在性）。
+      security: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: 公共文章
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ArticlePublic" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /public/categories:
+    get:
+      tags: [public]
+      summary: 浏览端分类列表
+      operationId: publicListCategories
+      description: 仅返回存在已发布文章的未删分类。
+      security: []
+      responses:
+        "200":
+          description: 分类列表
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Category" }
+  /public/search:
+    get:
+      tags: [public]
+      summary: 浏览端搜索
+      operationId: publicSearch
+      description: 标题+摘要+正文文本匹配；仅 published；排序同列表（置顶优先 + 发布时间倒序）；空关键词返回空结果。
+      security: []
+      parameters:
+        - { name: q, in: query, required: true, schema: { type: string, minLength: 1 } }
+        - { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
+        - { name: pageSize, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 10 } }
+      responses:
+        "200":
+          description: 搜索结果
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ArticlePublicPage" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: access token（1h），登录时签发；刷新与登出依赖 HttpOnly refresh cookie。
+  responses:
+    ValidationError:
+      description: 参数或报文校验失败（含未知字段）
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    Unauthorized:
+      description: 未认证或令牌失效
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    Forbidden:
+      description: 已认证但权限不足（含首登强制改密期间的业务端点）
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    NotFound:
+      description: 不存在；公共侧对隐藏内容统一 404 防枚举
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    Conflict:
+      description: 非法状态流转或约束冲突
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    Unprocessable:
+      description: 业务规则不满足（如提交时字段不齐全）
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    TooManyRequests:
+      description: 限流
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+  schemas:
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code: { type: string, description: 稳定错误码，如 VALIDATION_FAILED/UNAUTHENTICATED/FORBIDDEN/NOT_FOUND/CONFLICT/UNPROCESSABLE/RATE_LIMITED/INTERNAL }
+        message: { type: string }
+        details:
+          type: object
+          additionalProperties: true
+    ErrorEnvelope:
+      type: object
+      required: [error]
+      properties:
+        error: { $ref: "#/components/schemas/Error" }
+    Role:
+      type: string
+      enum: [admin, editor, reviewer, operator]
+      description: operator 为后续预留，M0 不启用
+    UserStatus:
+      type: string
+      enum: [active, disabled]
+    ArticleStatus:
+      type: string
+      enum: [draft, pending_review, published, unpublished]
+      description: 无独立 rejected 枚举；驳回 = draft + rejectReason/rejectedAt 非空（前端显示为「已驳回待修改」）
+    User:
+      type: object
+      required: [id, username, displayName, role, status, createdAt, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        username: { type: string }
+        displayName: { type: string, description: 作者展示名 }
+        role: { $ref: "#/components/schemas/Role" }
+        status: { $ref: "#/components/schemas/UserStatus" }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    CurrentUser:
+      allOf:
+        - { $ref: "#/components/schemas/User" }
+        - type: object
+          required: [permissions, mustChangePassword]
+          properties:
+            permissions:
+              type: array
+              items: { type: string }
+              description: 权限点列表，如 articles:submit、articles:approve 等
+            mustChangePassword:
+              type: boolean
+              description: true 时仅 /auth/me、/auth/change-password、/auth/logout 放行，其余管理端点 403
+    LoginRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username: { type: string }
+        password: { type: string }
+    LoginResponse:
+      type: object
+      required: [accessToken, expiresIn, user]
+      properties:
+        accessToken: { type: string, description: 1 小时有效，请求头携带 }
+        expiresIn: { type: integer, description: 秒 }
+        user: { $ref: "#/components/schemas/CurrentUser" }
+    ChangePasswordRequest:
+      type: object
+      required: [oldPassword, newPassword]
+      properties:
+        oldPassword: { type: string, description: 首登场景为初始/临时口令 }
+        newPassword: { type: string, minLength: 8, maxLength: 72 }
+    Category:
+      type: object
+      required: [id, name, slug, articleCount, createdAt, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        slug: { type: string }
+        description: { type: string, nullable: true }
+        sortOrder: { type: integer, default: 0 }
+        articleCount: { type: integer, description: 已发布文章数（公共侧）/全部非删文章数（管理端） }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    CategoryCreateRequest:
+      type: object
+      required: [name, slug]
+      properties:
+        name: { type: string, maxLength: 50 }
+        slug: { type: string, maxLength: 50 }
+        description: { type: string, maxLength: 200 }
+        sortOrder: { type: integer, default: 0 }
+    CategoryUpdateRequest:
+      type: object
+      properties:
+        name: { type: string, maxLength: 50 }
+        slug: { type: string, maxLength: 50 }
+        description: { type: string, maxLength: 200, nullable: true }
+        sortOrder: { type: integer }
+    Article:
+      type: object
+      required:
+        - id
+        - title
+        - summary
+        - bodyHtml
+        - categoryId
+        - status
+        - pinned
+        - version
+        - createdAt
+        - updatedAt
+      properties:
+        id: { type: string, format: uuid }
+        title: { type: string, maxLength: 200 }
+        summary: { type: string, maxLength: 500 }
+        bodyHtml: { type: string, description: 白名单消毒后的富文本 HTML }
+        bodyText: { type: string, description: 纯文本（供搜索），不随公共端返回 }
+        categoryId: { type: string, format: uuid }
+        categoryName: { type: string }
+        coverUrl: { type: string, maxLength: 2048, nullable: true }
+        status: { $ref: "#/components/schemas/ArticleStatus" }
+        rejectReason: { type: string, maxLength: 500, nullable: true }
+        rejectedAt: { type: string, format: date-time, nullable: true, description: 驳回时间 }
+        pinned: { type: boolean }
+        pinnedAt: { type: string, format: date-time, nullable: true }
+        submittedAt: { type: string, format: date-time, nullable: true }
+        publishedAt: { type: string, format: date-time, nullable: true }
+        unpublishedAt: { type: string, format: date-time, nullable: true }
+        createdBy: { type: string, format: uuid }
+        createdByName: { type: string }
+        updatedBy: { type: string, format: uuid, nullable: true }
+        version: { type: integer, description: 乐观锁版本 }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    ArticleCreateRequest:
+      type: object
+      required: [title, summary, bodyHtml, categoryId]
+      properties:
+        title: { type: string, maxLength: 200 }
+        summary: { type: string, maxLength: 500 }
+        bodyHtml: { type: string, description: 原始输入，服务端消毒后存储；大小上限 2MB }
+        categoryId: { type: string, format: uuid, description: 必选单选 }
+        coverUrl: { type: string, maxLength: 2048, nullable: true }
+    ArticleUpdateRequest:
+      type: object
+      properties:
+        title: { type: string, maxLength: 200 }
+        summary: { type: string, maxLength: 500 }
+        bodyHtml: { type: string }
+        categoryId: { type: string, format: uuid }
+        coverUrl: { type: string, maxLength: 2048, nullable: true }
+    RejectRequest:
+      type: object
+      required: [reason]
+      properties:
+        reason: { type: string, minLength: 1, maxLength: 500 }
+    UnpublishRequest:
+      type: object
+      properties:
+        reason: { type: string, maxLength: 500 }
+    PinRequest:
+      type: object
+      required: [pinned]
+      properties:
+        pinned: { type: boolean }
+    ArticlePublic:
+      type: object
+      required: [id, title, summary, bodyHtml, categoryId, categoryName, publishedAt, pinned]
+      properties:
+        id: { type: string, format: uuid }
+        title: { type: string }
+        summary: { type: string }
+        bodyHtml: { type: string }
+        categoryId: { type: string, format: uuid }
+        categoryName: { type: string }
+        coverUrl: { type: string, nullable: true }
+        publishedAt: { type: string, format: date-time }
+        pinned: { type: boolean }
+    Page:
+      type: object
+      required: [items, total, page, pageSize]
+      properties:
+        items:
+          type: array
+          items:
+            type: object
+        total: { type: integer }
+        page: { type: integer }
+        pageSize: { type: integer }
+    ArticlePage:
+      allOf:
+        - { $ref: "#/components/schemas/Page" }
+        - type: object
+          properties:
+            items:
+              type: array
+              items: { $ref: "#/components/schemas/Article" }
+    ArticlePublicPage:
+      allOf:
+        - { $ref: "#/components/schemas/Page" }
+        - type: object
+          properties:
+            items:
+              type: array
+              items: { $ref: "#/components/schemas/ArticlePublic" }
+    UserPage:
+      allOf:
+        - { $ref: "#/components/schemas/Page" }
+        - type: object
+          properties:
+            items:
+              type: array
+              items: { $ref: "#/components/schemas/User" }
+    UserCreateRequest:
+      type: object
+      required: [username, password, displayName, role]
+      properties:
+        username: { type: string, maxLength: 50 }
+        password: { type: string, minLength: 8, maxLength: 72, description: 临时口令，首登强制改密 }
+        displayName: { type: string, maxLength: 50 }
+        role: { $ref: "#/components/schemas/Role" }
+    UserUpdateRequest:
+      type: object
+      properties:
+        displayName: { type: string, maxLength: 50 }
+        role: { $ref: "#/components/schemas/Role" }
+    UserStatusUpdateRequest:
+      type: object
+      required: [status]
+      properties:
+        status: { $ref: "#/components/schemas/UserStatus" }
+    AuditAction:
+      type: string
+      enum:
+        - login
+        - failed_login
+        - logout
+        - article_create
+        - article_update
+        - article_soft_delete
+        - article_submit
+        - article_approve
+        - article_reject
+        - article_unpublish
+        - article_pin
+        - user_create
+        - user_update
+        - user_disable
+        - user_reset_password
+        - user_password_change
+        - category_create
+        - category_update
+        - category_soft_delete
+    AuditLog:
+      type: object
+      required: [id, actorId, actorName, action, resourceType, resourceId, ip, createdAt]
+      properties:
+        id: { type: integer }
+        actorId: { type: string, format: uuid }
+        actorName: { type: string }
+        action: { $ref: "#/components/schemas/AuditAction" }
+        resourceType: { type: string }
+        resourceId: { type: string }
+        before: { type: object, additionalProperties: true, nullable: true }
+        after: { type: object, additionalProperties: true, nullable: true }
+        ip: { type: string }
+        createdAt: { type: string, format: date-time }
+    AuditLogPage:
+      allOf:
+        - { $ref: "#/components/schemas/Page" }
+        - type: object
+          properties:
+            items:
+              type: array
+              items: { $ref: "#/components/schemas/AuditLog" }

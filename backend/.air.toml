@@ -1,0 +1,18 @@
+root = "."
+tmp_dir = "tmp"
+
+[build]
+  cmd = "go build -o ./tmp/server ./cmd/server"
+  bin = "./tmp/server"
+  include_ext = ["go"]
+  exclude_dir = ["tmp", ".git", "docs", "frontend"]
+
+[log]
+  time = false
+
+[env]
+  APP_ENV = "development"
+  APP_PORT = "8080"
+
+[misc]
+  clean_on_exit = true

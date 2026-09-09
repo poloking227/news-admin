@@ -1,0 +1,25 @@
+@import 'tailwindcss';
+
+/*
+ * 设计令牌骨架（Tailwind CSS v4 CSS-first 配置）。
+ * 与 docs/architecture.md 的模块边界对应：public 壳轻量使用原子类，
+ * admin 壳后续接入 Element Plus 时以组件库主题为准。
+ */
+@theme {
+  --font-sans:
+    ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'PingFang SC',
+    'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+}
+
+:root {
+  color-scheme: light;
+}
+
+body {
+  margin: 0;
+  background-color: var(--color-gray-50);
+  color: var(--color-gray-900);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}

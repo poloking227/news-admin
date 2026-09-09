@@ -21,6 +21,8 @@ type Config struct {
 	LogLevel string
 	// CORSOrigins lists the origins allowed by the CORS middleware.
 	CORSOrigins []string
+	// DatabaseURL is the PostgreSQL DSN used by migrations and the repository layer.
+	DatabaseURL string
 	// ReadTimeout / WriteTimeout bound a single HTTP request lifecycle.
 	ReadTimeout time.Duration
 	// ShutdownTimeout bounds the graceful shutdown wait for in-flight requests.
@@ -38,6 +40,7 @@ func Load() (*Config, error) {
 		Port:            getenv("APP_PORT", "8080"),
 		LogLevel:        getenv("LOG_LEVEL", "info"),
 		CORSOrigins:     splitCSV(getenv("CORS_ORIGIN", "http://localhost:5173")),
+		DatabaseURL:     getenv("DATABASE_URL", "postgres://newsadmin:newsadmin_dev@localhost:5432/news_admin?sslmode=disable"),
 		ReadTimeout:     10 * time.Second,
 		ShutdownTimeout: 10 * time.Second,
 	}

@@ -7,6 +7,7 @@ func TestLoadDefaults(t *testing.T) {
 	t.Setenv("APP_PORT", "")
 	t.Setenv("LOG_LEVEL", "")
 	t.Setenv("CORS_ORIGIN", "")
+	t.Setenv("DATABASE_URL", "")
 
 	cfg, err := Load()
 	if err != nil {
@@ -21,6 +22,9 @@ func TestLoadDefaults(t *testing.T) {
 	if len(cfg.CORSOrigins) != 1 || cfg.CORSOrigins[0] != "http://localhost:5173" {
 		t.Errorf("CORSOrigins = %v, want [http://localhost:5173]", cfg.CORSOrigins)
 	}
+	if cfg.DatabaseURL == "" {
+		t.Error("DatabaseURL = empty, want a default DSN")
+	}
 }
 
 func TestLoadFromEnv(t *testing.T) {
@@ -28,6 +32,7 @@ func TestLoadFromEnv(t *testing.T) {
 	t.Setenv("APP_PORT", "9090")
 	t.Setenv("LOG_LEVEL", "warn")
 	t.Setenv("CORS_ORIGIN", "https://admin.example.com, https://www.example.com")
+	t.Setenv("DATABASE_URL", "postgres://u:p@localhost:5432/db?sslmode=disable")
 
 	cfg, err := Load()
 	if err != nil {
@@ -41,6 +46,9 @@ func TestLoadFromEnv(t *testing.T) {
 	}
 	if cfg.CORSOrigins[1] != "https://www.example.com" {
 		t.Errorf("CORSOrigins[1] = %q, want trimmed second origin", cfg.CORSOrigins[1])
+	}
+	if cfg.DatabaseURL != "postgres://u:p@localhost:5432/db?sslmode=disable" {
+		t.Errorf("DatabaseURL = %q, want env value", cfg.DatabaseURL)
 	}
 }
 

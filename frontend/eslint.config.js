@@ -5,7 +5,7 @@ import tseslint from 'typescript-eslint'
 
 export default tseslint.config(
   {
-    ignores: ['**/dist/**', '**/coverage/**', '**/node_modules/**', 'pnpm-lock.yaml'],
+    ignores: ['**/dist/**', '**/coverage/**', '**/node_modules/**', 'pnpm-lock.yaml']
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,
@@ -16,9 +16,9 @@ export default tseslint.config(
     languageOptions: {
       parserOptions: {
         parser: tseslint.parser,
-        extraFileExtensions: ['.vue'],
-      },
-    },
+        extraFileExtensions: ['.vue']
+      }
+    }
   },
   {
     files: ['**/*.{ts,vue}'],
@@ -26,8 +26,8 @@ export default tseslint.config(
       'vue/multi-word-component-names': 'off',
       '@typescript-eslint/no-unused-vars': [
         'error',
-        { argsIgnorePattern: '^_', varsIgnorePattern: '^_' },
-      ],
-    },
-  },
+        { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }
+      ]
+    }
+  }
 )

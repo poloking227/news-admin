@@ -3,12 +3,18 @@ import type {
   ChangePasswordRequest,
   CurrentUser,
   LoginRequest,
-  LoginResponse,
+  LoginResponse
 } from '@/shared/types/api'
 
 /** 登录：refresh token 由后端写入 HttpOnly cookie，前端仅接收 access token */
 export async function login(payload: LoginRequest): Promise<LoginResponse> {
   const { data } = await http.post<LoginResponse>('/auth/login', payload)
+  return data
+}
+
+/** 刷新访问令牌：依赖 HttpOnly refresh cookie，旋转后下发新 access token 与新 cookie */
+export async function refreshSession(): Promise<LoginResponse> {
+  const { data } = await http.post<LoginResponse>('/auth/refresh', null)
   return data
 }
 
@@ -18,7 +24,7 @@ export async function fetchCurrentUser(): Promise<CurrentUser> {
   return data
 }
 
-/** 修改密码：成功后需重新登录 */
+/** 修改密码：成功后会话被吊销，需重新登录 */
 export async function changePassword(payload: ChangePasswordRequest): Promise<void> {
   await http.post('/auth/change-password', payload)
 }

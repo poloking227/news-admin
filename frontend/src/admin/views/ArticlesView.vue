@@ -10,7 +10,9 @@
         新建文章
       </button>
     </div>
-    <div class="mt-4 rounded-lg border border-gray-200 bg-white p-8 text-center text-sm text-gray-400">
+    <div
+      class="mt-4 rounded-lg border border-gray-200 bg-white p-8 text-center text-sm text-gray-400"
+    >
       列表与编辑能力待文章模块（客户端接口）落地
     </div>
   </section>

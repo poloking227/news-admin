@@ -9,7 +9,9 @@
       公共侧仅展示 published 且未删除的内容；列表与搜索随 C 系列任务落地。
     </p>
     <div class="mt-6 grid gap-4">
-      <div class="rounded-lg border border-gray-200 bg-white p-4 text-sm text-gray-400">暂无内容</div>
+      <div class="rounded-lg border border-gray-200 bg-white p-4 text-sm text-gray-400">
+        暂无内容
+      </div>
     </div>
   </section>
 </template>

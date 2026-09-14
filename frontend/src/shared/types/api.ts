@@ -63,3 +63,31 @@ export interface ChangePasswordRequest {
   oldPassword: string
   newPassword: string
 }
+
+export interface Category {
+  id: string
+  name: string
+  slug: string
+  description: string | null
+  sortOrder: number
+  /** 文章数：公共侧为已发布数，管理端为全部非删数 */
+  articleCount: number
+  createdAt: string
+  updatedAt: string
+}
+
+/** 创建分类：契约要求 name/slug 必填 */
+export interface CategoryCreateRequest {
+  name: string
+  slug: string
+  description?: string | null
+  sortOrder?: number
+}
+
+/** 更新分类：字段均可选（部分更新语义） */
+export interface CategoryUpdateRequest {
+  name?: string
+  slug?: string
+  description?: string | null
+  sortOrder?: number
+}

@@ -56,6 +56,9 @@ export interface LoginResponse {
   user: CurrentUser
 }
 
+/** 刷新端点与登录端点返回同一结构 */
+export type RefreshResponse = LoginResponse
+
 export interface ChangePasswordRequest {
   oldPassword: string
   newPassword: string

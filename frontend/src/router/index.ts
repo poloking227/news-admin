@@ -63,7 +63,8 @@ const routes: RouteRecordRaw[] = [
         path: 'categories',
         name: 'admin-categories',
         component: () => import('@/admin/views/CategoriesView.vue'),
-        meta: { roles: ['admin', 'editor'], title: '分类管理' }
+        // 分类管理仅管理员可操作（契约 /admin/categories）
+        meta: { roles: ['admin'], title: '分类管理' }
       },
       {
         path: 'users',
@@ -78,6 +79,12 @@ const routes: RouteRecordRaw[] = [
         meta: { roles: ['admin'], title: '审计日志' }
       }
     ]
+  },
+  {
+    path: '/forbidden',
+    name: 'forbidden',
+    component: () => import('@/shared/views/ForbiddenView.vue'),
+    meta: { title: '无权访问' }
   },
   {
     path: '/:pathMatch(.*)*',
@@ -118,7 +125,8 @@ router.beforeEach(async (to) => {
       return { name: 'admin-change-password', query: { redirect: to.fullPath } }
     }
     if (to.meta.roles && (!auth.role || !to.meta.roles.includes(auth.role))) {
-      return { name: 'not-found' }
+      // 已认证但角色不匹配：403 提示（区别于未认证的 404/登录跳转）
+      return { name: 'forbidden' }
     }
     return true
   }

@@ -11,6 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"news-admin/backend/internal/config"
+	"news-admin/backend/internal/repository"
 )
 
 func testRouter(t *testing.T) http.Handler {
@@ -21,8 +22,14 @@ func testRouter(t *testing.T) http.Handler {
 		Port:        "8080",
 		LogLevel:    "info",
 		CORSOrigins: []string{"http://localhost:5173"},
+		JWTSecret:   "test-secret",
 	}
-	return NewRouter(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	return NewRouter(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)), Deps{
+		Secret:   cfg.JWTSecret,
+		Users:    repository.NewUserRepository(nil),
+		Sessions: repository.NewSessionRepository(nil),
+		Audit:    repository.NewAuditRepository(nil),
+	})
 }
 
 func TestHealthz(t *testing.T) {

@@ -12,8 +12,12 @@ import (
 	"os/signal"
 	"syscall"
 
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
+
 	"news-admin/backend/internal/api"
 	"news-admin/backend/internal/config"
+	"news-admin/backend/internal/repository"
 )
 
 func main() {
@@ -31,9 +35,20 @@ func run() error {
 	logger := newLogger(cfg)
 	slog.SetDefault(logger)
 
+	db, err := gorm.Open(postgres.Open(cfg.DatabaseURL), &gorm.Config{})
+	if err != nil {
+		return err
+	}
+
 	server := &http.Server{
-		Addr:         ":" + cfg.Port,
-		Handler:      api.NewRouter(cfg, logger),
+		Addr: ":" + cfg.Port,
+		Handler: api.NewRouter(cfg, logger, api.Deps{
+			Secret:   cfg.JWTSecret,
+			Secure:   cfg.AppEnv == "production",
+			Users:    repository.NewUserRepository(db),
+			Sessions: repository.NewSessionRepository(db),
+			Audit:    repository.NewAuditRepository(db),
+		}),
 		ReadTimeout:  cfg.ReadTimeout,
 		WriteTimeout: cfg.ReadTimeout,
 	}

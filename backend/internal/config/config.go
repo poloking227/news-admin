@@ -23,6 +23,8 @@ type Config struct {
 	CORSOrigins []string
 	// DatabaseURL is the PostgreSQL DSN used by migrations and the repository layer.
 	DatabaseURL string
+	// JWTSecret signs HS256 access tokens; injected via environment only.
+	JWTSecret string
 	// ReadTimeout / WriteTimeout bound a single HTTP request lifecycle.
 	ReadTimeout time.Duration
 	// ShutdownTimeout bounds the graceful shutdown wait for in-flight requests.
@@ -41,6 +43,7 @@ func Load() (*Config, error) {
 		LogLevel:        getenv("LOG_LEVEL", "info"),
 		CORSOrigins:     splitCSV(getenv("CORS_ORIGIN", "http://localhost:5173")),
 		DatabaseURL:     getenv("DATABASE_URL", "postgres://newsadmin:newsadmin_dev@localhost:5432/news_admin?sslmode=disable"),
+		JWTSecret:       getenv("JWT_SECRET", "dev-only-insecure-secret"),
 		ReadTimeout:     10 * time.Second,
 		ShutdownTimeout: 10 * time.Second,
 	}

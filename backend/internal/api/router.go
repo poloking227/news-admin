@@ -3,11 +3,13 @@
 package api
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
 
+	"news-admin/backend/internal/api/authorize"
 	"news-admin/backend/internal/api/handler"
 	"news-admin/backend/internal/api/middleware"
 	"news-admin/backend/internal/api/response"
@@ -60,8 +62,33 @@ func NewRouter(cfg *config.Config, logger *slog.Logger, deps Deps) *gin.Engine {
 		authed.GET("/me", authHandler.Me)
 	}
 
+	registerAdminRoutes(router, deps)
+
 	router.NoRoute(func(c *gin.Context) {
 		response.WriteError(c, http.StatusNotFound, response.CodeNotFound, "route not found", nil)
 	})
 	return router
+}
+
+// registerAdminRoutes mounts the /api/v1/admin group behind the full RBAC
+// chain (RequireAuth → RequireUserActive → RequirePasswordChanged →
+// RequirePermission) and binds every contract route to its permission point.
+// Business handlers land in their own changes; until then a 501 placeholder
+// proves the permission layer works end to end.
+func registerAdminRoutes(router *gin.Engine, deps Deps) {
+	getUser := func(ctx context.Context, id string) (*domain.User, error) {
+		return deps.Users.FindByID(ctx, id)
+	}
+
+	admin := router.Group("/api/v1/admin",
+		middleware.RequireAuth(deps.Secret),
+		middleware.RequireUserActive(getUser),
+		middleware.RequirePasswordChanged(getUser),
+	)
+	for _, route := range authorize.AdminRoutes {
+		admin.Handle(route.Method, route.Path,
+			middleware.RequirePermission(route.Permission),
+			handler.NotImplemented(),
+		)
+	}
 }

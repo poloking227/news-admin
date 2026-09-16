@@ -5,6 +5,7 @@ package domain
 import (
 	"context"
 	"errors"
+	"slices"
 	"time"
 )
 
@@ -19,33 +20,42 @@ const (
 	UserStatusDisabled = "disabled"
 )
 
-// Permission points (RBAC), matching docs/openapi.yaml and the shared contract.
+// Permission points (RBAC), matching the shared contract: articles carry
+// create/update/soft-delete/submit/approve/reject/unpublish/pin plus a read
+// point for detail/list access.
 const (
-	PermArticleCreate    = "articles:create"
-	PermArticleUpdate    = "articles:update"
-	PermArticleDelete    = "articles:delete"
-	PermArticleSubmit    = "articles:submit"
-	PermArticleApprove   = "articles:approve"
-	PermArticleReject    = "articles:reject"
-	PermArticleUnpublish = "articles:unpublish"
-	PermArticlePin       = "articles:pin"
-	PermCategoriesManage = "categories:manage"
-	PermUsersManage      = "users:manage"
-	PermAuditRead        = "audit:read"
+	PermArticleRead       = "articles:read"
+	PermArticleCreate     = "articles:create"
+	PermArticleUpdate     = "articles:update"
+	PermArticleSoftDelete = "articles:soft_delete"
+	PermArticleSubmit     = "articles:submit"
+	PermArticleApprove    = "articles:approve"
+	PermArticleReject     = "articles:reject"
+	PermArticleUnpublish  = "articles:unpublish"
+	PermArticlePin        = "articles:pin"
+	PermCategoriesManage  = "categories:manage"
+	PermUsersManage       = "users:manage"
+	PermAuditRead         = "audit:read"
 )
 
-// RolePermissions maps each role to its permission points.
+// ArticlePermissions lists every article-scoped permission point.
+var ArticlePermissions = []string{
+	PermArticleRead, PermArticleCreate, PermArticleUpdate, PermArticleSoftDelete,
+	PermArticleSubmit, PermArticleApprove, PermArticleReject, PermArticleUnpublish,
+	PermArticlePin,
+}
+
+// RolePermissions maps each role to its permission points. admin has the full
+// set; editor produces/submits and may soft-delete its own drafts; reviewer
+// approves/rejects/unpublishes/pins without editing content; operator is
+// reserved for P1 and inactive in M0.
 var RolePermissions = map[string][]string{
-	RoleAdmin: {
-		PermArticleCreate, PermArticleUpdate, PermArticleDelete, PermArticleSubmit,
-		PermArticleApprove, PermArticleReject, PermArticleUnpublish, PermArticlePin,
-		PermCategoriesManage, PermUsersManage, PermAuditRead,
-	},
+	RoleAdmin: append(append([]string{}, ArticlePermissions...), PermCategoriesManage, PermUsersManage, PermAuditRead),
 	RoleEditor: {
-		PermArticleCreate, PermArticleUpdate, PermArticleDelete, PermArticleSubmit,
+		PermArticleRead, PermArticleCreate, PermArticleUpdate, PermArticleSoftDelete, PermArticleSubmit,
 	},
 	RoleReviewer: {
-		PermArticleApprove, PermArticleReject, PermArticleUnpublish, PermArticlePin,
+		PermArticleRead, PermArticleApprove, PermArticleReject, PermArticleUnpublish, PermArticlePin,
 	},
 	RoleOperator: {},
 }
@@ -57,6 +67,11 @@ func PermissionsFor(role string) []string {
 		return nil
 	}
 	return perms
+}
+
+// HasPermission reports whether the role carries the given permission point.
+func HasPermission(role, permission string) bool {
+	return slices.Contains(PermissionsFor(role), permission)
 }
 
 // User is the domain entity backed by the users table.

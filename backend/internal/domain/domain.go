@@ -138,6 +138,11 @@ const (
 // Repository errors.
 var (
 	ErrNotFound = errors.New("not found")
+	// ErrSlugConflict is returned when a category name/slug already exists.
+	ErrSlugConflict = errors.New("category slug already exists")
+	// ErrCategoryInUse is returned when soft-deleting a category that still
+	// has linked, non-deleted articles.
+	ErrCategoryInUse = errors.New("category still has linked articles")
 )
 
 // UserRepository persists users.
@@ -169,4 +174,52 @@ type SessionRepository interface {
 type AuditRepository interface {
 	// Insert stores an audit entry.
 	Insert(ctx context.Context, entry *AuditLog) error
+}
+
+// Category is the domain entity backed by the categories table.
+type Category struct {
+	ID          string
+	Name        string
+	Slug        string
+	Description *string
+	SortOrder   int
+	// ArticleCount is the number of non-deleted articles linked to the
+	// category (admin listing) or published articles (public listing).
+	ArticleCount int64
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
+}
+
+// CategoryInput carries the mutable fields of a category.
+type CategoryInput struct {
+	Name        string
+	Slug        string
+	Description *string
+	SortOrder   int
+}
+
+// CategoryRepository persists categories.
+type CategoryRepository interface {
+	// List returns all non-deleted categories, newest first, each with its
+	// non-deleted article count.
+	List(ctx context.Context) ([]*Category, error)
+	// ListPublished returns categories that have at least one published,
+	// non-deleted article, with the published article count.
+	ListPublished(ctx context.Context) ([]*Category, error)
+	// Create inserts a new category and returns it with counts zeroed.
+	Create(ctx context.Context, in *CategoryInput) (*Category, error)
+	// Update changes mutable fields; the slug uniqueness check excludes the
+	// category itself.
+	Update(ctx context.Context, id string, in *CategoryInput) (*Category, error)
+	// SoftDelete marks the category as deleted; ErrCategoryInUse when linked
+	// non-deleted articles exist.
+	SoftDelete(ctx context.Context, id string) error
+	// ExistsSlug reports whether any non-deleted category uses the slug,
+	// ignoring the given id.
+	ExistsSlug(ctx context.Context, slug, exceptID string) (bool, error)
+	// HasLinkedArticles reports whether non-deleted articles reference the
+	// category.
+	HasLinkedArticles(ctx context.Context, categoryID string) (bool, error)
+	// FindByID returns the category or ErrNotFound.
+	FindByID(ctx context.Context, id string) (*Category, error)
 }

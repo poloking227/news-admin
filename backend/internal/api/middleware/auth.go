@@ -80,3 +80,18 @@ func RequirePasswordChanged(getUser UserGetter) gin.HandlerFunc {
 		c.Next()
 	}
 }
+
+// RequirePermission enforces a single permission point against the role claim
+// stored by RequireAuth (RBAC, fourth layer of the middleware chain). Missing
+// permission yields a 403 with the contract envelope.
+func RequirePermission(permission string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		role := c.GetString(handler.UserRoleKey())
+		if !domain.HasPermission(role, permission) {
+			response.WriteError(c, http.StatusForbidden, response.CodeForbidden, "insufficient permissions", nil)
+			c.Abort()
+			return
+		}
+		c.Next()
+	}
+}

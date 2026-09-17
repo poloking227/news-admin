@@ -30,6 +30,8 @@ type Deps struct {
 	Sessions domain.SessionRepository
 	// Audit writes audit entries.
 	Audit domain.AuditRepository
+	// Categories persists categories.
+	Categories domain.CategoryRepository
 }
 
 // NewRouter builds the HTTP router for the config/logging provided.
@@ -63,6 +65,7 @@ func NewRouter(cfg *config.Config, logger *slog.Logger, deps Deps) *gin.Engine {
 	}
 
 	registerAdminRoutes(router, deps)
+	registerPublicRoutes(router, deps)
 
 	router.NoRoute(func(c *gin.Context) {
 		response.WriteError(c, http.StatusNotFound, response.CodeNotFound, "route not found", nil)
@@ -70,11 +73,22 @@ func NewRouter(cfg *config.Config, logger *slog.Logger, deps Deps) *gin.Engine {
 	return router
 }
 
+// registerPublicRoutes mounts the anonymous public endpoints.
+func registerPublicRoutes(router *gin.Engine, deps Deps) {
+	if deps.Categories == nil {
+		return
+	}
+	catHandler := handler.NewCategoryHandler(service.NewCategoryService(deps.Categories, deps.Audit))
+
+	pub := router.Group("/api/v1/public")
+	pub.GET("/categories", catHandler.ListPublic)
+}
+
 // registerAdminRoutes mounts the /api/v1/admin group behind the full RBAC
 // chain (RequireAuth → RequireUserActive → RequirePasswordChanged →
 // RequirePermission) and binds every contract route to its permission point.
-// Business handlers land in their own changes; until then a 501 placeholder
-// proves the permission layer works end to end.
+// Categories carry real handlers; the remaining routes keep a 501 placeholder
+// until their owning changes land.
 func registerAdminRoutes(router *gin.Engine, deps Deps) {
 	getUser := func(ctx context.Context, id string) (*domain.User, error) {
 		return deps.Users.FindByID(ctx, id)
@@ -85,10 +99,28 @@ func registerAdminRoutes(router *gin.Engine, deps Deps) {
 		middleware.RequireUserActive(getUser),
 		middleware.RequirePasswordChanged(getUser),
 	)
+
+	var catHandler *handler.CategoryHandler
+	if deps.Categories != nil {
+		catHandler = handler.NewCategoryHandler(service.NewCategoryService(deps.Categories, deps.Audit))
+	}
 	for _, route := range authorize.AdminRoutes {
+		h := gin.HandlerFunc(handler.NotImplemented())
+		if catHandler != nil {
+			switch {
+			case route.Method == http.MethodGet && route.Path == "/categories":
+				h = catHandler.List
+			case route.Method == http.MethodPost && route.Path == "/categories":
+				h = catHandler.Create
+			case route.Method == http.MethodPut && route.Path == "/categories/:id":
+				h = catHandler.Update
+			case route.Method == http.MethodDelete && route.Path == "/categories/:id":
+				h = catHandler.Delete
+			}
+		}
 		admin.Handle(route.Method, route.Path,
 			middleware.RequirePermission(route.Permission),
-			handler.NotImplemented(),
+			h,
 		)
 	}
 }

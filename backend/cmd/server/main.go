@@ -43,11 +43,12 @@ func run() error {
 	server := &http.Server{
 		Addr: ":" + cfg.Port,
 		Handler: api.NewRouter(cfg, logger, api.Deps{
-			Secret:   cfg.JWTSecret,
-			Secure:   cfg.AppEnv == "production",
-			Users:    repository.NewUserRepository(db),
-			Sessions: repository.NewSessionRepository(db),
-			Audit:    repository.NewAuditRepository(db),
+			Secret:     cfg.JWTSecret,
+			Secure:     cfg.AppEnv == "production",
+			Users:      repository.NewUserRepository(db),
+			Sessions:   repository.NewSessionRepository(db),
+			Audit:      repository.NewAuditRepository(db),
+			Categories: repository.NewCategoryRepository(db),
 		}),
 		ReadTimeout:  cfg.ReadTimeout,
 		WriteTimeout: cfg.ReadTimeout,

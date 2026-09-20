@@ -143,6 +143,13 @@ var (
 	// ErrCategoryInUse is returned when soft-deleting a category that still
 	// has linked, non-deleted articles.
 	ErrCategoryInUse = errors.New("category still has linked articles")
+	// ErrVersionConflict is returned on optimistic-lock mismatch (If-Match).
+	ErrVersionConflict = errors.New("version conflict")
+	// ErrArticleNotEditable is returned when updating/deleting an article in
+	// a state other than draft (including rejected drafts).
+	ErrArticleNotEditable = errors.New("article not editable in its current state")
+	// ErrArticlePublished is returned when deleting a published article.
+	ErrArticlePublished = errors.New("published article cannot be deleted")
 )
 
 // UserRepository persists users.
@@ -222,4 +229,88 @@ type CategoryRepository interface {
 	HasLinkedArticles(ctx context.Context, categoryID string) (bool, error)
 	// FindByID returns the category or ErrNotFound.
 	FindByID(ctx context.Context, id string) (*Category, error)
+}
+
+// Article statuses, matching the contract enum. There is no rejected value:
+// rejection is draft + rejectReason/rejectedAt set.
+const (
+	ArticleStatusDraft         = "draft"
+	ArticleStatusPendingReview = "pending_review"
+	ArticleStatusPublished     = "published"
+	ArticleStatusUnpublished   = "unpublished"
+)
+
+// Article is the domain entity backed by the articles table.
+type Article struct {
+	ID            string
+	Title         string
+	Summary       string
+	BodyHTML      string
+	BodyText      string
+	CategoryID    string
+	CategoryName  string
+	CoverURL      *string
+	Status        string
+	RejectReason  *string
+	RejectedAt    *time.Time
+	Pinned        bool
+	PinnedAt      *time.Time
+	SubmittedAt   *time.Time
+	PublishedAt   *time.Time
+	UnpublishedAt *time.Time
+	CreatedBy     string
+	CreatedByName string
+	UpdatedBy     *string
+	Version       int
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
+}
+
+// ArticleInput carries the mutable fields of an article draft. BodyText is
+// the plain-text derivative computed by the service from the sanitized HTML.
+type ArticleInput struct {
+	Title      string
+	Summary    string
+	BodyHTML   string
+	BodyText   string
+	CategoryID string
+	CoverURL   *string
+}
+
+// ArticleQuery filters the admin article listing.
+type ArticleQuery struct {
+	Status     *string
+	CategoryID *string
+	Keyword    *string
+	Pinned     *bool
+	Page       int
+	PageSize   int
+	// UserID is the caller for visibility; admin/reviewer see all,
+	// editor sees own non-deleted plus all published.
+	UserID string
+	Role   string
+}
+
+// ArticlePage is a page of admin articles.
+type ArticlePage struct {
+	Items    []*Article
+	Total    int64
+	Page     int
+	PageSize int
+}
+
+// ArticleRepository persists articles.
+type ArticleRepository interface {
+	// Create inserts a new draft article.
+	Create(ctx context.Context, in *ArticleInput, actorID string, now time.Time) (*Article, error)
+	// FindByID returns the article by id (non-deleted), or ErrNotFound.
+	FindByID(ctx context.Context, id string) (*Article, error)
+	// Update applies a partial change guarded by the stored version; the
+	// version is bumped on success. ErrVersionConflict when the stored
+	// version differs from the caller's expectation.
+	Update(ctx context.Context, id string, in *ArticleInput, expectedVersion int, actorID string, now time.Time) (*Article, error)
+	// SoftDelete marks the article deleted, guarded by status.
+	SoftDelete(ctx context.Context, id string, now time.Time) error
+	// List returns articles matching the query with counts.
+	List(ctx context.Context, q *ArticleQuery) (*ArticlePage, error)
 }

@@ -49,6 +49,7 @@ func run() error {
 			Sessions:   repository.NewSessionRepository(db),
 			Audit:      repository.NewAuditRepository(db),
 			Categories: repository.NewCategoryRepository(db),
+			Articles:   repository.NewArticleRepository(db),
 		}),
 		ReadTimeout:  cfg.ReadTimeout,
 		WriteTimeout: cfg.ReadTimeout,

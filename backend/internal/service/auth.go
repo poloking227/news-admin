@@ -21,6 +21,10 @@ var (
 	ErrMustChangePassword = errors.New("password change required")
 	ErrPasswordPolicy     = errors.New("new password does not meet requirements")
 	ErrWrongPassword      = errors.New("old password is incorrect")
+	// ErrArticleValidation covers size/scheme rule violations; ErrInvalidArticleBody
+	// fires when the sanitized body is empty (e.g. only script tags).
+	ErrArticleValidation  = errors.New("article validation failed")
+	ErrInvalidArticleBody = errors.New("article body required")
 )
 
 // AuthService coordinates login, token refresh, logout, password change, and

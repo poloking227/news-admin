@@ -32,6 +32,8 @@ type Deps struct {
 	Audit domain.AuditRepository
 	// Categories persists categories.
 	Categories domain.CategoryRepository
+	// Articles persists articles.
+	Articles domain.ArticleRepository
 }
 
 // NewRouter builds the HTTP router for the config/logging provided.
@@ -100,23 +102,27 @@ func registerAdminRoutes(router *gin.Engine, deps Deps) {
 		middleware.RequirePasswordChanged(getUser),
 	)
 
-	var catHandler *handler.CategoryHandler
+	handlers := map[[2]string]gin.HandlerFunc{}
 	if deps.Categories != nil {
-		catHandler = handler.NewCategoryHandler(service.NewCategoryService(deps.Categories, deps.Audit))
+		catHandler := handler.NewCategoryHandler(service.NewCategoryService(deps.Categories, deps.Audit))
+		handlers[[2]string{http.MethodGet, "/categories"}] = catHandler.List
+		handlers[[2]string{http.MethodPost, "/categories"}] = catHandler.Create
+		handlers[[2]string{http.MethodPut, "/categories/:id"}] = catHandler.Update
+		handlers[[2]string{http.MethodDelete, "/categories/:id"}] = catHandler.Delete
 	}
+	if deps.Articles != nil {
+		articleHandler := handler.NewArticleHandler(service.NewArticleService(deps.Articles, deps.Users, deps.Categories, deps.Audit))
+		handlers[[2]string{http.MethodGet, "/articles"}] = articleHandler.List
+		handlers[[2]string{http.MethodPost, "/articles"}] = articleHandler.Create
+		handlers[[2]string{http.MethodGet, "/articles/:id"}] = articleHandler.Get
+		handlers[[2]string{http.MethodPut, "/articles/:id"}] = articleHandler.Update
+		handlers[[2]string{http.MethodDelete, "/articles/:id"}] = articleHandler.Delete
+	}
+
 	for _, route := range authorize.AdminRoutes {
-		h := gin.HandlerFunc(handler.NotImplemented())
-		if catHandler != nil {
-			switch {
-			case route.Method == http.MethodGet && route.Path == "/categories":
-				h = catHandler.List
-			case route.Method == http.MethodPost && route.Path == "/categories":
-				h = catHandler.Create
-			case route.Method == http.MethodPut && route.Path == "/categories/:id":
-				h = catHandler.Update
-			case route.Method == http.MethodDelete && route.Path == "/categories/:id":
-				h = catHandler.Delete
-			}
+		h, ok := handlers[[2]string{route.Method, route.Path}]
+		if !ok {
+			h = handler.NotImplemented()
 		}
 		admin.Handle(route.Method, route.Path,
 			middleware.RequirePermission(route.Permission),

@@ -66,3 +66,8 @@ func responseInternal(c *gin.Context, err error) {
 func currentUserID(c *gin.Context) string {
 	return c.GetString(ctxUserKey)
 }
+
+// currentUserRole returns the role claim placed in the context.
+func currentUserRole(c *gin.Context) string {
+	return c.GetString(ctxUserRoleKey)
+}

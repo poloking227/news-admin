@@ -1,6 +1,8 @@
 // Package sanitize provides the server-side HTML whitelist policy for article
-// body content (architecture §3.4): rich-text tags survive, everything else
-// including scripts, styles, and event attributes is stripped.
+// body content: rich-text tags survive, everything else including scripts,
+// styles, and event attributes is stripped. The whitelist mirrors the
+// frontend editor constraints so that rendered content stays consistent
+// across both sides.
 package sanitize
 
 import (

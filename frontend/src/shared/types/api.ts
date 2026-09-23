@@ -179,3 +179,36 @@ export interface ArticleListQuery {
 }
 
 export type ArticlePage = PageResult<Article>
+
+/** 浏览端公共文章：仅 published；契约 v4 未含作者字段，authorDisplayName 预留供契约补充后展示 */
+export interface PublicArticle {
+  id: string
+  title: string
+  summary: string
+  /** 服务端白名单清洗后的富文本 HTML；渲染前经 DOMPurify 客户端再清洗 */
+  bodyHtml: string
+  categoryId: string
+  categoryName: string
+  coverUrl: string | null
+  publishedAt: string
+  pinned: boolean
+  /** 契约 v4 未定义；后端补充 createdBy/displayName 后转为必填 */
+  authorDisplayName?: string
+}
+
+/** 浏览端列表查询：分类筛选/关键字 + 分页 */
+export interface PublicListQuery {
+  categoryId?: string
+  keyword?: string
+  page?: number
+  pageSize?: number
+}
+
+/** 浏览端搜索结果查询：q 必填（minLength 1，空关键词不请求） */
+export interface PublicSearchQuery {
+  q: string
+  page?: number
+  pageSize?: number
+}
+
+export type PublicArticlePage = PageResult<PublicArticle>

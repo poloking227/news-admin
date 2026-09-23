@@ -117,6 +117,11 @@ func registerAdminRoutes(router *gin.Engine, deps Deps) {
 		handlers[[2]string{http.MethodGet, "/articles/:id"}] = articleHandler.Get
 		handlers[[2]string{http.MethodPut, "/articles/:id"}] = articleHandler.Update
 		handlers[[2]string{http.MethodDelete, "/articles/:id"}] = articleHandler.Delete
+		handlers[[2]string{http.MethodPost, "/articles/:id/submit"}] = articleHandler.Submit
+		handlers[[2]string{http.MethodPost, "/articles/:id/approve"}] = articleHandler.Approve
+		handlers[[2]string{http.MethodPost, "/articles/:id/reject"}] = articleHandler.Reject
+		handlers[[2]string{http.MethodPost, "/articles/:id/unpublish"}] = articleHandler.Unpublish
+		handlers[[2]string{http.MethodPut, "/articles/:id/pin"}] = articleHandler.Pin
 	}
 
 	for _, route := range authorize.AdminRoutes {

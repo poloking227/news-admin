@@ -124,16 +124,106 @@ func (h *ArticleHandler) Delete(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
+// Submit handles POST /api/v1/admin/articles/{id}/submit (draft|unpublished →
+// pending_review).
+func (h *ArticleHandler) Submit(c *gin.Context) {
+	article, err := h.svc.Submit(c.Request.Context(), c.Param("id"), currentUserID(c), c.ClientIP())
+	if err != nil {
+		h.writeArticleError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, articleJSON(article))
+}
+
+// Approve handles POST /api/v1/admin/articles/{id}/approve (pending_review →
+// published).
+func (h *ArticleHandler) Approve(c *gin.Context) {
+	article, err := h.svc.Approve(c.Request.Context(), c.Param("id"), currentUserID(c), c.ClientIP())
+	if err != nil {
+		h.writeArticleError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, articleJSON(article))
+}
+
+type rejectRequest struct {
+	Reason string `json:"reason" binding:"required"`
+}
+
+// Reject handles POST /api/v1/admin/articles/{id}/reject (pending_review →
+// draft with a required reason).
+func (h *ArticleHandler) Reject(c *gin.Context) {
+	var req rejectRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		responseValidation(c, err)
+		return
+	}
+	article, err := h.svc.Reject(c.Request.Context(), c.Param("id"), req.Reason, currentUserID(c), c.ClientIP())
+	if err != nil {
+		h.writeArticleError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, articleJSON(article))
+}
+
+type unpublishRequest struct {
+	Reason *string `json:"reason"`
+}
+
+// Unpublish handles POST /api/v1/admin/articles/{id}/unpublish (published →
+// unpublished, optional reason).
+func (h *ArticleHandler) Unpublish(c *gin.Context) {
+	var req unpublishRequest
+	if c.Request.ContentLength > 0 {
+		if err := c.ShouldBindJSON(&req); err != nil {
+			responseValidation(c, err)
+			return
+		}
+	}
+	article, err := h.svc.Unpublish(c.Request.Context(), c.Param("id"), req.Reason, currentUserID(c), c.ClientIP())
+	if err != nil {
+		h.writeArticleError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, articleJSON(article))
+}
+
+type pinRequest struct {
+	Pinned bool `json:"pinned"`
+}
+
+// Pin handles PUT /api/v1/admin/articles/{id}/pin (published pin toggle).
+func (h *ArticleHandler) Pin(c *gin.Context) {
+	var req pinRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		responseValidation(c, err)
+		return
+	}
+	article, err := h.svc.Pin(c.Request.Context(), c.Param("id"), req.Pinned, currentUserID(c), c.ClientIP())
+	if err != nil {
+		h.writeArticleError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, articleJSON(article))
+}
+
 func (h *ArticleHandler) writeArticleError(c *gin.Context, err error) {
 	switch {
-	case errors.Is(err, service.ErrArticleValidation), errors.Is(err, service.ErrInvalidArticleBody):
+	case errors.Is(err, service.ErrArticleValidation), errors.Is(err, service.ErrInvalidArticleBody),
+		errors.Is(err, service.ErrRejectReasonInvalid), errors.Is(err, service.ErrReasonTooLong):
 		responseWriteError(c, http.StatusBadRequest, responseCodeValidation, responseMessage(err), nil)
+	case errors.Is(err, service.ErrArticleIncomplete):
+		responseWriteError(c, http.StatusUnprocessableEntity, responseCodeUnprocessable, responseMessage(err), nil)
 	case errors.Is(err, domain.ErrVersionConflict):
 		responseWriteError(c, http.StatusConflict, responseCodeConflict, "version conflict, article was modified", nil)
 	case errors.Is(err, domain.ErrArticlePublished):
 		responseWriteError(c, http.StatusConflict, responseCodeConflict, "published article cannot be deleted", nil)
 	case errors.Is(err, domain.ErrArticleNotEditable):
 		responseWriteError(c, http.StatusConflict, responseCodeConflict, "article not editable in its current state", nil)
+	case errors.Is(err, domain.ErrIllegalTransition):
+		responseWriteError(c, http.StatusConflict, responseCodeConflict, "illegal article status transition", nil)
+	case errors.Is(err, domain.ErrNotArticleOwner):
+		responseWriteError(c, http.StatusForbidden, responseCodeForbidden, "only the article author can submit it", nil)
 	case errors.Is(err, domain.ErrNotFound):
 		responseWriteError(c, http.StatusNotFound, responseCodeNotFound, "article not found", nil)
 	default:

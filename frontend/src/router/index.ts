@@ -30,6 +30,12 @@ const routes: RouteRecordRaw[] = [
         name: 'public-article-detail',
         component: () => import('@/public/views/ArticleDetailView.vue'),
         meta: { title: '文章详情' }
+      },
+      {
+        path: 'search',
+        name: 'public-search',
+        component: () => import('@/public/views/SearchView.vue'),
+        meta: { title: '搜索' }
       }
     ]
   },

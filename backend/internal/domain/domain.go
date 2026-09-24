@@ -150,6 +150,12 @@ var (
 	ErrArticleNotEditable = errors.New("article not editable in its current state")
 	// ErrArticlePublished is returned when deleting a published article.
 	ErrArticlePublished = errors.New("published article cannot be deleted")
+	// ErrIllegalTransition is returned when an article status change is not
+	// one of the legal state-machine transitions.
+	ErrIllegalTransition = errors.New("illegal article status transition")
+	// ErrNotArticleOwner is returned when a caller tries to submit an article
+	// it did not create.
+	ErrNotArticleOwner = errors.New("only the article author can submit it")
 )
 
 // UserRepository persists users.
@@ -313,4 +319,12 @@ type ArticleRepository interface {
 	SoftDelete(ctx context.Context, id string, now time.Time) error
 	// List returns articles matching the query with counts.
 	List(ctx context.Context, q *ArticleQuery) (*ArticlePage, error)
+	// Transition applies one legal status transition guarded by the current
+	// status. extra carries transition-specific column values (timestamps,
+	// reject reason); the version is bumped and updated_by is refreshed.
+	// Illegal or stale-status transitions return ErrIllegalTransition.
+	Transition(ctx context.Context, id, from, to string, extra map[string]any, actorID string, now time.Time) (*Article, error)
+	// SetPinned toggles the pin on a published article; the version is
+	// bumped. Non-published articles return ErrIllegalTransition.
+	SetPinned(ctx context.Context, id string, pinned bool, actorID string, now time.Time) (*Article, error)
 }

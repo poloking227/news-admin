@@ -6,9 +6,23 @@ import (
 	"net/url"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"news-admin/backend/internal/domain"
 	"news-admin/backend/internal/sanitize"
+)
+
+// Errors the article workflow service reports to handlers.
+var (
+	// ErrArticleIncomplete is returned when a draft is missing required
+	// fields at submission time.
+	ErrArticleIncomplete = errors.New("article is missing required fields")
+	// ErrRejectReasonInvalid is returned when a reject reason is empty or
+	// longer than the 500-character limit.
+	ErrRejectReasonInvalid = errors.New("reject reason must not be empty and is limited to 500 characters")
+	// ErrReasonTooLong is returned when an optional unpublish reason exceeds
+	// the 500-character limit.
+	ErrReasonTooLong = errors.New("reason is limited to 500 characters")
 )
 
 // ArticleService orchestrates the article draft CRUD use-cases.
@@ -84,6 +98,126 @@ func (s *ArticleService) SoftDelete(ctx context.Context, id, actorID, ip string)
 		Actor: actorID, Action: domain.ActionArticleSoftDel,
 		ResourceType: "article", ResourceID: &id, IP: ip,
 	})
+	return nil
+}
+
+// Submit moves a draft (including a rejected draft) or an unpublished article
+// into pending_review. Only the author may submit; the article must carry the
+// required fields (title/summary/bodyHtml/categoryId).
+func (s *ArticleService) Submit(ctx context.Context, id, actorID, ip string) (*domain.Article, error) {
+	current, err := s.articles.FindByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if current.CreatedBy != actorID {
+		return nil, domain.ErrNotArticleOwner
+	}
+	// Only draft (including rejected) and unpublished articles can enter the
+	// review queue on their own; any other source state is not submittable.
+	switch current.Status {
+	case domain.ArticleStatusDraft, domain.ArticleStatusUnpublished:
+	default:
+		return nil, domain.ErrIllegalTransition
+	}
+	if err := s.checkSubmittable(current); err != nil {
+		return nil, err
+	}
+	now := s.now()
+	article, err := s.articles.Transition(ctx, id, current.Status, domain.ArticleStatusPendingReview,
+		map[string]any{"submitted_at": now}, actorID, now)
+	if err != nil {
+		return nil, err
+	}
+	_ = s.writeAudit(ctx, &domain.AuditLog{
+		Actor: actorID, Action: domain.ActionArticleSubmit,
+		ResourceType: "article", ResourceID: &article.ID, IP: ip,
+	})
+	return article, nil
+}
+
+// Approve publishes a pending_review article and stamps published_at. There
+// is no separate publish action: approval is publication.
+func (s *ArticleService) Approve(ctx context.Context, id, actorID, ip string) (*domain.Article, error) {
+	now := s.now()
+	article, err := s.articles.Transition(ctx, id, domain.ArticleStatusPendingReview, domain.ArticleStatusPublished,
+		map[string]any{"published_at": now}, actorID, now)
+	if err != nil {
+		return nil, err
+	}
+	_ = s.writeAudit(ctx, &domain.AuditLog{
+		Actor: actorID, Action: domain.ActionArticleApprove,
+		ResourceType: "article", ResourceID: &article.ID, IP: ip,
+	})
+	return article, nil
+}
+
+// Reject returns a pending_review article to draft with a mandatory reason,
+// stamping reject_reason and rejected_at (kept as the latest rejection).
+func (s *ArticleService) Reject(ctx context.Context, id, reason, actorID, ip string) (*domain.Article, error) {
+	reason = strings.TrimSpace(reason)
+	if reason == "" || utf8.RuneCountInString(reason) > 500 {
+		return nil, ErrRejectReasonInvalid
+	}
+	now := s.now()
+	article, err := s.articles.Transition(ctx, id, domain.ArticleStatusPendingReview, domain.ArticleStatusDraft,
+		map[string]any{"reject_reason": reason, "rejected_at": now}, actorID, now)
+	if err != nil {
+		return nil, err
+	}
+	_ = s.writeAudit(ctx, &domain.AuditLog{
+		Actor: actorID, Action: domain.ActionArticleReject,
+		ResourceType: "article", ResourceID: &article.ID, IP: ip,
+	})
+	return article, nil
+}
+
+// Unpublish takes a published article down and stamps unpublished_at. The
+// reason is optional and capped at 500 characters.
+func (s *ArticleService) Unpublish(ctx context.Context, id string, reason *string, actorID, ip string) (*domain.Article, error) {
+	if reason != nil {
+		trimmed := strings.TrimSpace(*reason)
+		if utf8.RuneCountInString(trimmed) > 500 {
+			return nil, ErrReasonTooLong
+		}
+		reason = &trimmed
+	}
+	now := s.now()
+	article, err := s.articles.Transition(ctx, id, domain.ArticleStatusPublished, domain.ArticleStatusUnpublished,
+		map[string]any{"unpublished_at": now}, actorID, now)
+	if err != nil {
+		return nil, err
+	}
+	audit := &domain.AuditLog{
+		Actor: actorID, Action: domain.ActionArticleUnpub,
+		ResourceType: "article", ResourceID: &article.ID, IP: ip,
+	}
+	if reason != nil {
+		audit.After = map[string]any{"reason": *reason}
+	}
+	_ = s.writeAudit(ctx, audit)
+	return article, nil
+}
+
+// Pin sets or clears the pinned flag on a published article.
+func (s *ArticleService) Pin(ctx context.Context, id string, pinned bool, actorID, ip string) (*domain.Article, error) {
+	article, err := s.articles.SetPinned(ctx, id, pinned, actorID, s.now())
+	if err != nil {
+		return nil, err
+	}
+	_ = s.writeAudit(ctx, &domain.AuditLog{
+		Actor: actorID, Action: domain.ActionArticlePin,
+		ResourceType: "article", ResourceID: &article.ID, IP: ip,
+	})
+	return article, nil
+}
+
+// checkSubmittable enforces that a draft carries everything the public reader
+// needs before it can enter the review queue.
+func (s *ArticleService) checkSubmittable(a *domain.Article) error {
+	ok := a.Title != "" && a.Summary != "" && a.BodyHTML != "" && a.CategoryID != ""
+	if !ok {
+		return ErrArticleIncomplete
+	}
 	return nil
 }
 

@@ -1,17 +1,27 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { useRouter } from 'vue-router'
 
 import { useAuthStore } from '@/shared/stores/auth'
+import { AUDIT_PERMISSIONS, USER_PERMISSIONS } from '@/shared/types/api'
 
 const authStore = useAuthStore()
 const router = useRouter()
 
-const navItems = [
-  { name: 'admin-articles', label: '文章管理' },
-  { name: 'admin-categories', label: '分类管理' },
-  { name: 'admin-users', label: '用户管理' },
-  { name: 'admin-audit-logs', label: '审计日志' }
-]
+/** 导航按权限点过滤：文章/分类沿用既有角色路由门槛，用户/审计按 C06 权限点 */
+const navItems = computed(() => {
+  const items: { name: string; label: string }[] = [
+    { name: 'admin-articles', label: '文章管理' },
+    { name: 'admin-categories', label: '分类管理' }
+  ]
+  if (authStore.hasPermission(USER_PERMISSIONS.manage)) {
+    items.push({ name: 'admin-users', label: '用户管理' })
+  }
+  if (authStore.hasPermission(AUDIT_PERMISSIONS.read)) {
+    items.push({ name: 'admin-audit-logs', label: '审计日志' })
+  }
+  return items
+})
 
 async function handleLogout() {
   await authStore.logout()

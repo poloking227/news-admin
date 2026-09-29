@@ -8,7 +8,7 @@ import { AUDIT_PERMISSIONS, USER_PERMISSIONS } from '@/shared/types/api'
 const authStore = useAuthStore()
 const router = useRouter()
 
-/** 导航按权限点过滤：文章/分类沿用既有角色路由门槛，用户/审计按 C06 权限点 */
+/** 导航按权限点过滤：文章/分类沿用既有角色路由门槛，用户/审计按 users:manage / audit:read 权限点门控 */
 const navItems = computed(() => {
   const items: { name: string; label: string }[] = [
     { name: 'admin-articles', label: '文章管理' },

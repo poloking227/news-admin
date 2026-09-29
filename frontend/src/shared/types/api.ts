@@ -212,3 +212,101 @@ export interface PublicSearchQuery {
 }
 
 export type PublicArticlePage = PageResult<PublicArticle>
+
+/**
+ * 用户管理权限点（契约 v4：users:manage → admin）。
+ * 与后端 permissions 返回串联调时对齐。
+ */
+export const USER_PERMISSIONS = {
+  manage: 'users:manage'
+} as const
+
+/** 审计查询权限点（契约 v4：audit:read → admin） */
+export const AUDIT_PERMISSIONS = {
+  read: 'audit:read'
+} as const
+
+/** 创建用户：临时口令开通，mustChangePassword=true（首登强制改密，同规则） */
+export interface UserCreateRequest {
+  username: string
+  password: string
+  displayName: string
+  role: Role
+}
+
+/** 更新用户：修改展示名/角色；禁止停用或降级自己 */
+export interface UserUpdateRequest {
+  displayName?: string
+  role?: Role
+}
+
+/** 启用/停用用户：禁止停用自己；停用后其会话即时失效 */
+export interface UserStatusUpdateRequest {
+  status: UserStatus
+}
+
+/** 重置密码响应：一次性临时口令，仅此响应返回；被重置用户 mustChangePassword=true */
+export interface ResetPasswordResponse {
+  temporaryPassword: string
+}
+
+/** 用户列表查询：role/status/keyword 过滤 + 分页（pageSize 1-100 默认 10） */
+export interface UserListQuery {
+  role?: Role
+  status?: UserStatus
+  keyword?: string
+  page?: number
+  pageSize?: number
+}
+
+export type UserPage = PageResult<User>
+
+/** 审计动作（AuditAction 枚举，与 openapi.yaml 对齐） */
+export type AuditAction =
+  | 'login'
+  | 'failed_login'
+  | 'logout'
+  | 'article_create'
+  | 'article_update'
+  | 'article_soft_delete'
+  | 'article_submit'
+  | 'article_approve'
+  | 'article_reject'
+  | 'article_unpublish'
+  | 'article_pin'
+  | 'user_create'
+  | 'user_update'
+  | 'user_disable'
+  | 'user_reset_password'
+  | 'user_password_change'
+  | 'category_create'
+  | 'category_update'
+  | 'category_soft_delete'
+
+/** 审计记录：before/after 为变更前后摘要快照（可能为 null） */
+export interface AuditLog {
+  id: number
+  actorId: string
+  actorName: string
+  action: AuditAction
+  resourceType: string
+  resourceId: string
+  before: Record<string, unknown> | null
+  after: Record<string, unknown> | null
+  ip: string
+  createdAt: string
+}
+
+/** 审计查询：actor/action/resourceType/resourceId/时间窗 + 分页 */
+export interface AuditLogListQuery {
+  actorId?: string
+  action?: AuditAction
+  resourceType?: string
+  resourceId?: string
+  from?: string
+  to?: string
+  page?: number
+  pageSize?: number
+}
+
+export type AuditLogPage = PageResult<AuditLog>

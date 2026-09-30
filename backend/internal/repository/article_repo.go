@@ -269,6 +269,104 @@ func (r *ArticleRepository) SetPinned(ctx context.Context, id string, pinned boo
 	return r.FindByID(ctx, id)
 }
 
+// ListPublic returns published, non-deleted articles, pinned first then
+// newest publishedAt. Hidden states never enter the result set.
+func (r *ArticleRepository) ListPublic(ctx context.Context, q *domain.PublicArticleQuery) (*domain.ArticlePage, error) {
+	base := r.db.WithContext(ctx).
+		Table("articles a").
+		Joins("LEFT JOIN categories c ON c.id = a.category_id").
+		Where("a.deleted_at IS NULL AND a.status = ?", domain.ArticleStatusPublished)
+	if q.CategoryID != nil && *q.CategoryID != "" {
+		base = base.Where("a.category_id = ?", *q.CategoryID)
+	}
+	var total int64
+	if err := base.Count(&total).Error; err != nil {
+		return nil, err
+	}
+	if q.Page < 1 {
+		q.Page = 1
+	}
+	if q.PageSize < 1 || q.PageSize > 100 {
+		q.PageSize = 10
+	}
+	var rows []articleRow
+	err := base.
+		Select("a.*").
+		Order("a.pinned DESC, a.published_at DESC").
+		Offset((q.Page - 1) * q.PageSize).
+		Limit(q.PageSize).
+		Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	return r.toPublicPage(ctx, rows, total, q.Page, q.PageSize)
+}
+
+// SearchPublic matches published, non-deleted articles against title,
+// summary, and body text using pg_trgm ILIKE (GIN index in 001_init).
+func (r *ArticleRepository) SearchPublic(ctx context.Context, q *domain.PublicArticleQuery) (*domain.ArticlePage, error) {
+	base := r.db.WithContext(ctx).
+		Table("articles a").
+		Joins("LEFT JOIN categories c ON c.id = a.category_id").
+		Where("a.deleted_at IS NULL AND a.status = ?", domain.ArticleStatusPublished)
+	if q.Keyword != nil && *q.Keyword != "" {
+		base = base.Where("(a.title ILIKE ? OR a.summary ILIKE ? OR a.body_text ILIKE ?)",
+			"%"+*q.Keyword+"%", "%"+*q.Keyword+"%", "%"+*q.Keyword+"%")
+	}
+	var total int64
+	if err := base.Count(&total).Error; err != nil {
+		return nil, err
+	}
+	if q.Page < 1 {
+		q.Page = 1
+	}
+	if q.PageSize < 1 || q.PageSize > 100 {
+		q.PageSize = 10
+	}
+	var rows []articleRow
+	err := base.
+		Select("a.*").
+		Order("a.pinned DESC, a.published_at DESC").
+		Offset((q.Page - 1) * q.PageSize).
+		Limit(q.PageSize).
+		Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	return r.toPublicPage(ctx, rows, total, q.Page, q.PageSize)
+}
+
+// FindPublic returns a published, non-deleted article by id; any other state
+// maps to ErrNotFound so drafts stay undiscoverable.
+func (r *ArticleRepository) FindPublic(ctx context.Context, id string) (*domain.Article, error) {
+	var row articleRow
+	err := r.db.WithContext(ctx).
+		Where("id = ? AND deleted_at IS NULL AND status = ?", id, domain.ArticleStatusPublished).
+		First(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, domain.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	article := row.toDomain()
+	r.db.WithContext(ctx).Table("categories").Select("name").
+		Where("id = ?", article.CategoryID).Scan(&article.CategoryName)
+	return article, nil
+}
+
+// toPublicPage assembles a page and enriches display names for the reader.
+func (r *ArticleRepository) toPublicPage(ctx context.Context, rows []articleRow, total int64, page, pageSize int) (*domain.ArticlePage, error) {
+	items := make([]*domain.Article, 0, len(rows))
+	for i := range rows {
+		items = append(items, rows[i].toDomain())
+	}
+	if len(items) > 0 {
+		r.attachDisplayNames(ctx, items)
+	}
+	return &domain.ArticlePage{Items: items, Total: total, Page: page, PageSize: pageSize}, nil
+}
+
 func (r *ArticleRepository) List(ctx context.Context, q *domain.ArticleQuery) (*domain.ArticlePage, error) {
 	base := r.db.WithContext(ctx).
 		Table("articles a").

@@ -297,6 +297,16 @@ type ArticleQuery struct {
 	Role   string
 }
 
+// PublicArticleQuery filters the anonymous public listing and search. Only
+// published, non-deleted articles are ever matched; sorting is pinned-first
+// then newest publishedAt.
+type PublicArticleQuery struct {
+	CategoryID *string
+	Keyword    *string
+	Page       int
+	PageSize   int
+}
+
 // ArticlePage is a page of admin articles.
 type ArticlePage struct {
 	Items    []*Article
@@ -327,4 +337,13 @@ type ArticleRepository interface {
 	// SetPinned toggles the pin on a published article; the version is
 	// bumped. Non-published articles return ErrIllegalTransition.
 	SetPinned(ctx context.Context, id string, pinned bool, actorID string, now time.Time) (*Article, error)
+	// ListPublic returns published, non-deleted articles matching the query,
+	// pinned first then by newest publishedAt.
+	ListPublic(ctx context.Context, q *PublicArticleQuery) (*ArticlePage, error)
+	// SearchPublic returns published, non-deleted articles whose title,
+	// summary, or body text matches the keyword (pg_trgm ILIKE).
+	SearchPublic(ctx context.Context, q *PublicArticleQuery) (*ArticlePage, error)
+	// FindPublic returns a published, non-deleted article by id, or
+	// ErrNotFound so hidden articles stay indistinguishable.
+	FindPublic(ctx context.Context, id string) (*Article, error)
 }

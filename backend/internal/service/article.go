@@ -255,3 +255,19 @@ func validateArticle(in *domain.ArticleInput) error {
 	}
 	return nil
 }
+
+// ListPublic returns a page of published articles for the public reader.
+func (s *ArticleService) ListPublic(ctx context.Context, q *domain.PublicArticleQuery) (*domain.ArticlePage, error) {
+	return s.articles.ListPublic(ctx, q)
+}
+
+// SearchPublic returns published articles matching the keyword; callers must
+// ensure the keyword is non-empty (empty q is rejected by the handler).
+func (s *ArticleService) SearchPublic(ctx context.Context, q *domain.PublicArticleQuery) (*domain.ArticlePage, error) {
+	return s.articles.SearchPublic(ctx, q)
+}
+
+// GetPublic returns one published article; hidden states map to ErrNotFound.
+func (s *ArticleService) GetPublic(ctx context.Context, id string) (*domain.Article, error) {
+	return s.articles.FindPublic(ctx, id)
+}

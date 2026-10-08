@@ -77,13 +77,19 @@ func NewRouter(cfg *config.Config, logger *slog.Logger, deps Deps) *gin.Engine {
 
 // registerPublicRoutes mounts the anonymous public endpoints.
 func registerPublicRoutes(router *gin.Engine, deps Deps) {
-	if deps.Categories == nil {
-		return
-	}
-	catHandler := handler.NewCategoryHandler(service.NewCategoryService(deps.Categories, deps.Audit))
-
 	pub := router.Group("/api/v1/public")
-	pub.GET("/categories", catHandler.ListPublic)
+
+	if deps.Categories != nil {
+		catHandler := handler.NewCategoryHandler(service.NewCategoryService(deps.Categories, deps.Audit))
+		pub.GET("/categories", catHandler.ListPublic)
+	}
+	if deps.Articles != nil {
+		articleSvc := service.NewArticleService(deps.Articles, deps.Users, deps.Categories, deps.Audit)
+		publicHandler := handler.NewPublicArticleHandler(articleSvc)
+		pub.GET("/articles", publicHandler.List)
+		pub.GET("/articles/:id", publicHandler.Get)
+		pub.GET("/search", publicHandler.Search)
+	}
 }
 
 // registerAdminRoutes mounts the /api/v1/admin group behind the full RBAC

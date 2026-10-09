@@ -88,6 +88,39 @@ type User struct {
 	UpdatedAt          time.Time
 }
 
+// UserInput carries the mutable fields for creating an account. The stored
+// password is always a bcrypt hash; MustChangePassword is forced for new
+// temporary-password accounts.
+type UserInput struct {
+	Username     string
+	PasswordHash string
+	DisplayName  string
+	Role         string
+}
+
+// UserUpdateInput carries optional field changes; nil fields are untouched.
+type UserUpdateInput struct {
+	DisplayName *string
+	Role        *string
+}
+
+// UserQuery filters the admin user listing.
+type UserQuery struct {
+	Role     *string
+	Status   *string
+	Keyword  *string
+	Page     int
+	PageSize int
+}
+
+// UserPage is a page of admin users.
+type UserPage struct {
+	Items    []*User
+	Total    int64
+	Page     int
+	PageSize int
+}
+
 // RefreshSession is one issued refresh token (jti), bound to a reuse-detection
 // family. Reusing a revoked jti revokes the whole family.
 type RefreshSession struct {
@@ -156,6 +189,13 @@ var (
 	// ErrNotArticleOwner is returned when a caller tries to submit an article
 	// it did not create.
 	ErrNotArticleOwner = errors.New("only the article author can submit it")
+	// ErrUsernameTaken is returned when a new username collides with an
+	// existing (non-deleted) account.
+	ErrUsernameTaken = errors.New("username already exists")
+	// ErrSelfRoleChange is returned when an admin tries to demote itself.
+	ErrSelfRoleChange = errors.New("cannot change your own role")
+	// ErrSelfStatusChange is returned when an admin tries to disable itself.
+	ErrSelfStatusChange = errors.New("cannot disable your own account")
 )
 
 // UserRepository persists users.
@@ -167,6 +207,17 @@ type UserRepository interface {
 	// UpdatePassword writes a new password hash, clears must_change_password,
 	// and records password_changed_at for the user.
 	UpdatePassword(ctx context.Context, id, passwordHash string, changedAt time.Time) error
+	// Create inserts a new user; ErrUsernameTaken when the username exists.
+	Create(ctx context.Context, in *UserInput, now time.Time) (*User, error)
+	// Update applies optional field changes; nil fields are untouched.
+	Update(ctx context.Context, id string, in *UserUpdateInput, now time.Time) (*User, error)
+	// SetStatus toggles active/disabled.
+	SetStatus(ctx context.Context, id, status string, now time.Time) (*User, error)
+	// SetPasswordHash writes a new password hash, forces must_change_password,
+	// and clears password_changed_at (temporary password flow).
+	SetPasswordHash(ctx context.Context, id, passwordHash string, now time.Time) error
+	// List returns users matching the query with counts.
+	List(ctx context.Context, q *UserQuery) (*UserPage, error)
 }
 
 // SessionRepository persists refresh sessions.

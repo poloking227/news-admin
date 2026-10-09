@@ -184,6 +184,61 @@ func (f *fakeArticleRepo) List(_ context.Context, q *domain.ArticleQuery) (*doma
 	return &domain.ArticlePage{Items: items, Total: int64(len(items)), Page: q.Page, PageSize: q.PageSize}, nil
 }
 
+// publicMatch reports whether the article is visible on the public site.
+func publicMatch(a *domain.Article, q *domain.PublicArticleQuery) bool {
+	if a.Status != domain.ArticleStatusPublished {
+		return false
+	}
+	if q.CategoryID != nil && *q.CategoryID != "" && a.CategoryID != *q.CategoryID {
+		return false
+	}
+	if q.Keyword != nil && *q.Keyword != "" {
+		kw := strings.ToLower(*q.Keyword)
+		if !strings.Contains(strings.ToLower(a.Title), kw) &&
+			!strings.Contains(strings.ToLower(a.Summary), kw) &&
+			!strings.Contains(strings.ToLower(a.BodyText), kw) {
+			return false
+		}
+	}
+	return true
+}
+
+func (f *fakeArticleRepo) ListPublic(ctx context.Context, q *domain.PublicArticleQuery) (*domain.ArticlePage, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.publicPageLocked(q)
+}
+
+func (f *fakeArticleRepo) SearchPublic(ctx context.Context, q *domain.PublicArticleQuery) (*domain.ArticlePage, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.publicPageLocked(q)
+}
+
+// publicPageLocked filters published articles; the caller holds the lock.
+func (f *fakeArticleRepo) publicPageLocked(q *domain.PublicArticleQuery) (*domain.ArticlePage, error) {
+	var items []*domain.Article
+	for _, a := range f.articles {
+		if !publicMatch(a, q) {
+			continue
+		}
+		cp := *a
+		items = append(items, &cp)
+	}
+	return &domain.ArticlePage{Items: items, Total: int64(len(items)), Page: q.Page, PageSize: q.PageSize}, nil
+}
+
+func (f *fakeArticleRepo) FindPublic(ctx context.Context, id string) (*domain.Article, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	a, ok := f.articles[id]
+	if !ok || a.Status != domain.ArticleStatusPublished {
+		return nil, domain.ErrNotFound
+	}
+	cp := *a
+	return &cp, nil
+}
+
 func ptr[T any](v T) *T { return &v }
 
 func TestArticleCreateSanitizesAndSetsDraft(t *testing.T) {
@@ -545,5 +600,150 @@ func TestArticlePublishedUpdateAndDeleteRefused(t *testing.T) {
 	}
 	if err := svc.SoftDelete(context.Background(), article.ID, "u1", "ip"); !errors.Is(err, domain.ErrArticlePublished) {
 		t.Errorf("SoftDelete(published) error = %v, want ErrArticlePublished", err)
+	}
+}
+
+// seedPublishedArticle drives a draft through approve so it is public.
+func seedPublishedArticle(t *testing.T, repo *fakeArticleRepo, svc *service.ArticleService, actor, title, body string) *domain.Article {
+	t.Helper()
+	article, err := svc.Create(context.Background(), &domain.ArticleInput{
+		Title: title, Summary: "摘要 " + title, BodyHTML: "<p>" + body + "</p>", CategoryID: "cat-1",
+	}, actor, "ip")
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if _, err := svc.Submit(context.Background(), article.ID, actor, "ip"); err != nil {
+		t.Fatalf("Submit() error = %v", err)
+	}
+	published, err := svc.Approve(context.Background(), article.ID, "reviewer", "ip")
+	if err != nil {
+		t.Fatalf("Approve() error = %v", err)
+	}
+	return published
+}
+
+func TestPublicListOnlyPublished(t *testing.T) {
+	repo := newFakeArticleRepo()
+	svc := service.NewArticleService(repo, newFakeUserRepo(), newFakeCategoryRepo(), newFakeAuditRepo())
+
+	pub := seedPublishedArticle(t, repo, svc, "u1", "公开文章", "visible")
+	// A draft that never reaches pending_review must stay hidden.
+	draft, err := svc.Create(context.Background(), &domain.ArticleInput{
+		Title: "草稿", Summary: "s", BodyHTML: "<p>x</p>", CategoryID: "cat-1",
+	}, "u1", "ip")
+	if err != nil {
+		t.Fatalf("Create(draft) error = %v", err)
+	}
+	// A published-then-unpublished article must also stay hidden.
+	unpublished, err := svc.Unpublish(context.Background(), pub.ID, nil, "reviewer", "ip")
+	if err != nil {
+		t.Fatalf("Unpublish() error = %v", err)
+	}
+
+	page, err := svc.ListPublic(context.Background(), &domain.PublicArticleQuery{Page: 1, PageSize: 10})
+	if err != nil {
+		t.Fatalf("ListPublic() error = %v", err)
+	}
+	ids := map[string]bool{}
+	for _, a := range page.Items {
+		ids[a.ID] = true
+	}
+	if ids[draft.ID] || ids[unpublished.ID] {
+		t.Errorf("hidden articles leaked into public list: %v", ids)
+	}
+	if page.Total != 0 {
+		t.Errorf("total = %d, want 0 (nothing published left)", page.Total)
+	}
+}
+
+func TestPublicListCategoryFilter(t *testing.T) {
+	repo := newFakeArticleRepo()
+	svc := service.NewArticleService(repo, newFakeUserRepo(), newFakeCategoryRepo(), newFakeAuditRepo())
+
+	seedPublishedArticle(t, repo, svc, "u1", "甲", "a")
+	_ = repo
+	// cat-2 articles are created directly with another category id.
+	article2, err := svc.Create(context.Background(), &domain.ArticleInput{
+		Title: "乙", Summary: "s", BodyHTML: "<p>b</p>", CategoryID: "cat-2",
+	}, "u1", "ip")
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if _, err := svc.Submit(context.Background(), article2.ID, "u1", "ip"); err != nil {
+		t.Fatalf("Submit() error = %v", err)
+	}
+	if _, err := svc.Approve(context.Background(), article2.ID, "reviewer", "ip"); err != nil {
+		t.Fatalf("Approve() error = %v", err)
+	}
+
+	catID := "cat-2"
+	page, err := svc.ListPublic(context.Background(), &domain.PublicArticleQuery{CategoryID: &catID, Page: 1, PageSize: 10})
+	if err != nil {
+		t.Fatalf("ListPublic(category) error = %v", err)
+	}
+	if len(page.Items) != 1 || page.Items[0].Title != "乙" {
+		t.Errorf("category filter got %d items, want only 乙", len(page.Items))
+	}
+}
+
+func TestPublicSearchMatchesTitleAndBody(t *testing.T) {
+	repo := newFakeArticleRepo()
+	svc := service.NewArticleService(repo, newFakeUserRepo(), newFakeCategoryRepo(), newFakeAuditRepo())
+
+	seedPublishedArticle(t, repo, svc, "u1", "Go 并发编程", "goroutine 详解")
+	seedPublishedArticle(t, repo, svc, "u1", "前端工程化", "vite 构建")
+
+	kw := "goroutine"
+	page, err := svc.SearchPublic(context.Background(), &domain.PublicArticleQuery{Keyword: &kw, Page: 1, PageSize: 10})
+	if err != nil {
+		t.Fatalf("SearchPublic() error = %v", err)
+	}
+	if len(page.Items) != 1 || page.Items[0].Title != "Go 并发编程" {
+		t.Errorf("search body hit got %d items: %+v", len(page.Items), page.Items)
+	}
+
+	kw = "Go"
+	page, err = svc.SearchPublic(context.Background(), &domain.PublicArticleQuery{Keyword: &kw, Page: 1, PageSize: 10})
+	if err != nil {
+		t.Fatalf("SearchPublic(title) error = %v", err)
+	}
+	if len(page.Items) != 1 || page.Items[0].Title != "Go 并发编程" {
+		t.Errorf("search title hit got %d items", len(page.Items))
+	}
+
+	kw = "不存在的词"
+	page, err = svc.SearchPublic(context.Background(), &domain.PublicArticleQuery{Keyword: &kw, Page: 1, PageSize: 10})
+	if err != nil {
+		t.Fatalf("SearchPublic(no hit) error = %v", err)
+	}
+	if len(page.Items) != 0 || page.Total != 0 {
+		t.Errorf("search no-hit got %d items", len(page.Items))
+	}
+}
+
+func TestPublicGetHiddenArticleReturnsNotFound(t *testing.T) {
+	repo := newFakeArticleRepo()
+	svc := service.NewArticleService(repo, newFakeUserRepo(), newFakeCategoryRepo(), newFakeAuditRepo())
+
+	draft, err := svc.Create(context.Background(), &domain.ArticleInput{
+		Title: "草稿", Summary: "s", BodyHTML: "<p>x</p>", CategoryID: "cat-1",
+	}, "u1", "ip")
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if _, err := svc.GetPublic(context.Background(), draft.ID); !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("GetPublic(draft) error = %v, want ErrNotFound", err)
+	}
+	if _, err := svc.GetPublic(context.Background(), "missing"); !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("GetPublic(missing) error = %v, want ErrNotFound", err)
+	}
+
+	published := seedPublishedArticle(t, repo, svc, "u1", "公开", "x")
+	got, err := svc.GetPublic(context.Background(), published.ID)
+	if err != nil {
+		t.Fatalf("GetPublic(published) error = %v", err)
+	}
+	if got.ID != published.ID {
+		t.Errorf("got article %s, want %s", got.ID, published.ID)
 	}
 }

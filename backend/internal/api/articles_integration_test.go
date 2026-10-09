@@ -190,6 +190,52 @@ func (f *faArticleRepo) List(_ context.Context, q *domain.ArticleQuery) (*domain
 	return &domain.ArticlePage{Items: items, Total: int64(len(items)), Page: q.Page, PageSize: q.PageSize}, nil
 }
 
+func (f *faArticleRepo) ListPublic(_ context.Context, q *domain.PublicArticleQuery) (*domain.ArticlePage, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.publicPageLocked(q)
+}
+
+func (f *faArticleRepo) SearchPublic(_ context.Context, q *domain.PublicArticleQuery) (*domain.ArticlePage, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.publicPageLocked(q)
+}
+
+func (f *faArticleRepo) publicPageLocked(q *domain.PublicArticleQuery) (*domain.ArticlePage, error) {
+	var items []*domain.Article
+	for _, a := range f.articles {
+		if a.Status != domain.ArticleStatusPublished {
+			continue
+		}
+		if q.CategoryID != nil && *q.CategoryID != "" && a.CategoryID != *q.CategoryID {
+			continue
+		}
+		if q.Keyword != nil && *q.Keyword != "" {
+			kw := strings.ToLower(*q.Keyword)
+			if !strings.Contains(strings.ToLower(a.Title), kw) &&
+				!strings.Contains(strings.ToLower(a.Summary), kw) &&
+				!strings.Contains(strings.ToLower(a.BodyText), kw) {
+				continue
+			}
+		}
+		cp := *a
+		items = append(items, &cp)
+	}
+	return &domain.ArticlePage{Items: items, Total: int64(len(items)), Page: q.Page, PageSize: q.PageSize}, nil
+}
+
+func (f *faArticleRepo) FindPublic(_ context.Context, id string) (*domain.Article, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	a, ok := f.articles[id]
+	if !ok || a.Status != domain.ArticleStatusPublished {
+		return nil, domain.ErrNotFound
+	}
+	cp := *a
+	return &cp, nil
+}
+
 func articlesRouter(t *testing.T, users *rbacUserRepo, cats *fkCategoryRepo, arts *faArticleRepo) http.Handler {
 	t.Helper()
 	return articlesRouterWithAudit(t, users, cats, arts, newTFakeAudit())

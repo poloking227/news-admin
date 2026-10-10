@@ -129,6 +129,14 @@ func registerAdminRoutes(router *gin.Engine, deps Deps) {
 		handlers[[2]string{http.MethodPost, "/articles/:id/unpublish"}] = articleHandler.Unpublish
 		handlers[[2]string{http.MethodPut, "/articles/:id/pin"}] = articleHandler.Pin
 	}
+	if deps.Users != nil && deps.Sessions != nil {
+		userHandler := handler.NewUserHandler(service.NewUserService(deps.Users, deps.Sessions, deps.Audit))
+		handlers[[2]string{http.MethodGet, "/users"}] = userHandler.List
+		handlers[[2]string{http.MethodPost, "/users"}] = userHandler.Create
+		handlers[[2]string{http.MethodPut, "/users/:id"}] = userHandler.Update
+		handlers[[2]string{http.MethodPatch, "/users/:id/status"}] = userHandler.SetStatus
+		handlers[[2]string{http.MethodPost, "/users/:id/reset-password"}] = userHandler.ResetPassword
+	}
 
 	for _, route := range authorize.AdminRoutes {
 		h, ok := handlers[[2]string{route.Method, route.Path}]

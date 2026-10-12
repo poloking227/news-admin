@@ -5,8 +5,10 @@ package repository
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"gorm.io/gorm"
 
 	"news-admin/backend/internal/domain"
@@ -87,4 +89,117 @@ func (r *UserRepository) UpdatePassword(ctx context.Context, id, passwordHash st
 			"password_changed_at":  changedAt,
 			"updated_at":           changedAt,
 		}).Error
+}
+
+// Create inserts a new user with the given bcrypt hash and forces the M0
+// temporary-password flag. A citext uniqueness violation becomes
+// ErrUsernameTaken.
+func (r *UserRepository) Create(ctx context.Context, in *domain.UserInput, now time.Time) (*domain.User, error) {
+	row := userRow{
+		ID:                 newCategoryID(),
+		Username:           in.Username,
+		PasswordHash:       in.PasswordHash,
+		DisplayName:        in.DisplayName,
+		Role:               in.Role,
+		Status:             domain.UserStatusActive,
+		MustChangePassword: true,
+		CreatedAt:          now,
+		UpdatedAt:          now,
+	}
+	if err := r.db.WithContext(ctx).Create(&row).Error; err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			return nil, domain.ErrUsernameTaken
+		}
+		return nil, err
+	}
+	return row.toDomain(), nil
+}
+
+// Update applies optional field changes; nil means "leave unchanged".
+func (r *UserRepository) Update(ctx context.Context, id string, in *domain.UserUpdateInput, now time.Time) (*domain.User, error) {
+	updates := map[string]any{"updated_at": now}
+	if in.DisplayName != nil {
+		updates["display_name"] = *in.DisplayName
+	}
+	if in.Role != nil {
+		updates["role"] = *in.Role
+	}
+	res := r.db.WithContext(ctx).Model(&userRow{}).
+		Where("id = ? AND deleted_at IS NULL", id).
+		Updates(updates)
+	if res.Error != nil {
+		return nil, res.Error
+	}
+	if res.RowsAffected == 0 {
+		return nil, domain.ErrNotFound
+	}
+	return r.FindByID(ctx, id)
+}
+
+// SetStatus toggles the account between active and disabled.
+func (r *UserRepository) SetStatus(ctx context.Context, id, status string, now time.Time) (*domain.User, error) {
+	res := r.db.WithContext(ctx).Model(&userRow{}).
+		Where("id = ? AND deleted_at IS NULL", id).
+		Updates(map[string]any{"status": status, "updated_at": now})
+	if res.Error != nil {
+		return nil, res.Error
+	}
+	if res.RowsAffected == 0 {
+		return nil, domain.ErrNotFound
+	}
+	return r.FindByID(ctx, id)
+}
+
+// SetPasswordHash installs a temporary password and clears the change
+// timestamp: the account must change it on the next login (M0).
+func (r *UserRepository) SetPasswordHash(ctx context.Context, id, passwordHash string, now time.Time) error {
+	return r.db.WithContext(ctx).Model(&userRow{}).
+		Where("id = ? AND deleted_at IS NULL", id).
+		Updates(map[string]any{
+			"password_hash":        passwordHash,
+			"must_change_password": true,
+			"password_changed_at":  nil,
+			"updated_at":           now,
+		}).Error
+}
+
+// List returns users matching role/status/keyword filters with pagination
+// (defaults page=1, pageSize=10, max 100), newest first.
+func (r *UserRepository) List(ctx context.Context, q *domain.UserQuery) (*domain.UserPage, error) {
+	base := r.db.WithContext(ctx).Model(&userRow{}).Where("deleted_at IS NULL")
+	if q.Role != nil && *q.Role != "" {
+		base = base.Where("role = ?", *q.Role)
+	}
+	if q.Status != nil && *q.Status != "" {
+		base = base.Where("status = ?", *q.Status)
+	}
+	if q.Keyword != nil && *q.Keyword != "" {
+		kw := "%" + strings.ToLower(*q.Keyword) + "%"
+		base = base.Where("(LOWER(username) LIKE ? OR LOWER(display_name) LIKE ?)", kw, kw)
+	}
+	var total int64
+	if err := base.Count(&total).Error; err != nil {
+		return nil, err
+	}
+	if q.Page < 1 {
+		q.Page = 1
+	}
+	if q.PageSize < 1 || q.PageSize > 100 {
+		q.PageSize = 10
+	}
+	var rows []userRow
+	err := base.
+		Order("created_at DESC").
+		Offset((q.Page - 1) * q.PageSize).
+		Limit(q.PageSize).
+		Find(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	items := make([]*domain.User, 0, len(rows))
+	for i := range rows {
+		items = append(items, rows[i].toDomain())
+	}
+	return &domain.UserPage{Items: items, Total: total, Page: q.Page, PageSize: q.PageSize}, nil
 }

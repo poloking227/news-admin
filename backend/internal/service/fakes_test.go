@@ -4,6 +4,7 @@ package service_test
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"time"
 
@@ -61,6 +62,98 @@ func (f *fakeUserRepo) upsert(u *domain.User) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.users[u.Username] = u
+}
+
+func (f *fakeUserRepo) Create(_ context.Context, in *domain.UserInput, now time.Time) (*domain.User, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, ok := f.users[in.Username]; ok {
+		return nil, domain.ErrUsernameTaken
+	}
+	user := &domain.User{
+		ID:                 "u-" + in.Username,
+		Username:           in.Username,
+		PasswordHash:       in.PasswordHash,
+		DisplayName:        in.DisplayName,
+		Role:               in.Role,
+		Status:             domain.UserStatusActive,
+		MustChangePassword: true,
+		CreatedAt:          now,
+		UpdatedAt:          now,
+	}
+	f.users[in.Username] = user
+	cp := *user
+	return &cp, nil
+}
+
+func (f *fakeUserRepo) Update(_ context.Context, id string, in *domain.UserUpdateInput, now time.Time) (*domain.User, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, u := range f.users {
+		if u.ID == id {
+			if in.DisplayName != nil {
+				u.DisplayName = *in.DisplayName
+			}
+			if in.Role != nil {
+				u.Role = *in.Role
+			}
+			u.UpdatedAt = now
+			cp := *u
+			return &cp, nil
+		}
+	}
+	return nil, domain.ErrNotFound
+}
+
+func (f *fakeUserRepo) SetStatus(_ context.Context, id, status string, now time.Time) (*domain.User, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, u := range f.users {
+		if u.ID == id {
+			u.Status = status
+			u.UpdatedAt = now
+			cp := *u
+			return &cp, nil
+		}
+	}
+	return nil, domain.ErrNotFound
+}
+
+func (f *fakeUserRepo) SetPasswordHash(_ context.Context, id, passwordHash string, now time.Time) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, u := range f.users {
+		if u.ID == id {
+			u.PasswordHash = passwordHash
+			u.MustChangePassword = true
+			u.PasswordChangedAt = nil
+			u.UpdatedAt = now
+			return nil
+		}
+	}
+	return domain.ErrNotFound
+}
+
+func (f *fakeUserRepo) List(_ context.Context, q *domain.UserQuery) (*domain.UserPage, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var items []*domain.User
+	for _, u := range f.users {
+		if q.Role != nil && *q.Role != "" && u.Role != *q.Role {
+			continue
+		}
+		if q.Status != nil && *q.Status != "" && u.Status != *q.Status {
+			continue
+		}
+		if q.Keyword != nil && *q.Keyword != "" &&
+			!strings.Contains(strings.ToLower(u.Username), strings.ToLower(*q.Keyword)) &&
+			!strings.Contains(strings.ToLower(u.DisplayName), strings.ToLower(*q.Keyword)) {
+			continue
+		}
+		cp := *u
+		items = append(items, &cp)
+	}
+	return &domain.UserPage{Items: items, Total: int64(len(items)), Page: q.Page, PageSize: q.PageSize}, nil
 }
 
 // fakeSessionRepo is an in-memory domain.SessionRepository.

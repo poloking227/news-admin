@@ -3,10 +3,12 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -55,6 +57,85 @@ func (r *rbacUserRepo) UpdatePassword(_ context.Context, id, hash string, at tim
 func (r *rbacUserRepo) add(u *domain.User) {
 	r.mu[u.ID] = u
 	r.byUid[u.Username] = u
+}
+
+func (r *rbacUserRepo) Create(_ context.Context, in *domain.UserInput, now time.Time) (*domain.User, error) {
+	for _, u := range r.mu {
+		if u.Username == in.Username {
+			return nil, domain.ErrUsernameTaken
+		}
+	}
+	u := &domain.User{
+		ID:                 "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb" + fmt.Sprintf("%d", len(r.mu)+1),
+		Username:           in.Username,
+		PasswordHash:       in.PasswordHash,
+		DisplayName:        in.DisplayName,
+		Role:               in.Role,
+		Status:             domain.UserStatusActive,
+		MustChangePassword: true,
+		CreatedAt:          now,
+		UpdatedAt:          now,
+	}
+	r.mu[u.ID] = u
+	r.byUid[u.Username] = u
+	return u, nil
+}
+
+func (r *rbacUserRepo) Update(_ context.Context, id string, in *domain.UserUpdateInput, now time.Time) (*domain.User, error) {
+	u, ok := r.mu[id]
+	if !ok {
+		return nil, domain.ErrNotFound
+	}
+	if in.DisplayName != nil {
+		u.DisplayName = *in.DisplayName
+	}
+	if in.Role != nil {
+		u.Role = *in.Role
+	}
+	u.UpdatedAt = now
+	return u, nil
+}
+
+func (r *rbacUserRepo) SetStatus(_ context.Context, id, status string, now time.Time) (*domain.User, error) {
+	u, ok := r.mu[id]
+	if !ok {
+		return nil, domain.ErrNotFound
+	}
+	u.Status = status
+	u.UpdatedAt = now
+	return u, nil
+}
+
+func (r *rbacUserRepo) SetPasswordHash(_ context.Context, id, passwordHash string, now time.Time) error {
+	u, ok := r.mu[id]
+	if !ok {
+		return domain.ErrNotFound
+	}
+	u.PasswordHash = passwordHash
+	u.MustChangePassword = true
+	u.PasswordChangedAt = nil
+	u.UpdatedAt = now
+	return nil
+}
+
+func (r *rbacUserRepo) List(_ context.Context, q *domain.UserQuery) (*domain.UserPage, error) {
+	var items []*domain.User
+	for _, u := range r.mu {
+		if q.Role != nil && *q.Role != "" && u.Role != *q.Role {
+			continue
+		}
+		if q.Status != nil && *q.Status != "" && u.Status != *q.Status {
+			continue
+		}
+		if q.Keyword != nil && *q.Keyword != "" &&
+			!strings.Contains(strings.ToLower(u.Username), strings.ToLower(*q.Keyword)) &&
+			!strings.Contains(strings.ToLower(u.DisplayName), strings.ToLower(*q.Keyword)) {
+			continue
+		}
+		cp := *u
+		items = append(items, &cp)
+	}
+	return &domain.UserPage{Items: items, Total: int64(len(items)), Page: q.Page, PageSize: q.PageSize}, nil
 }
 
 func rbacRouter(t *testing.T, users *rbacUserRepo, allMustChange bool) http.Handler {

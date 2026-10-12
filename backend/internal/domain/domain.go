@@ -135,7 +135,9 @@ type RefreshSession struct {
 
 // AuditLog is one audit entry written in the same transaction as the change.
 type AuditLog struct {
+	ID           int64
 	Actor        string
+	ActorName    string
 	Action       string
 	ResourceType string
 	ResourceID   *string
@@ -143,6 +145,27 @@ type AuditLog struct {
 	After        map[string]any
 	IP           string
 	CreatedAt    time.Time
+}
+
+// AuditQuery filters the admin audit-log listing; From/To form an inclusive
+// time window on createdAt.
+type AuditQuery struct {
+	ActorID      *string
+	Action       *string
+	ResourceType *string
+	ResourceID   *string
+	From         *time.Time
+	To           *time.Time
+	Page         int
+	PageSize     int
+}
+
+// AuditPage is a page of audit entries.
+type AuditPage struct {
+	Items    []*AuditLog
+	Total    int64
+	Page     int
+	PageSize int
 }
 
 // Audit actions, matching the contract enum.
@@ -234,10 +257,12 @@ type SessionRepository interface {
 	RevokeAllByUser(ctx context.Context, userID string) error
 }
 
-// AuditRepository writes audit entries.
+// AuditRepository writes and reads audit entries.
 type AuditRepository interface {
 	// Insert stores an audit entry.
 	Insert(ctx context.Context, entry *AuditLog) error
+	// List returns audit entries matching the query, newest first.
+	List(ctx context.Context, q *AuditQuery) (*AuditPage, error)
 }
 
 // Category is the domain entity backed by the categories table.

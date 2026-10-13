@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -233,6 +234,42 @@ func (f *tFakeAudit) actions() []string {
 		out = append(out, e.Action)
 	}
 	return out
+}
+
+func (f *tFakeAudit) List(_ context.Context, q *domain.AuditQuery) (*domain.AuditPage, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var items []*domain.AuditLog
+	for _, e := range f.entries {
+		if q.ActorID != nil && *q.ActorID != "" && e.Actor != *q.ActorID {
+			continue
+		}
+		if q.Action != nil && *q.Action != "" && e.Action != *q.Action {
+			continue
+		}
+		if q.ResourceType != nil && *q.ResourceType != "" && e.ResourceType != *q.ResourceType {
+			continue
+		}
+		if q.ResourceID != nil && *q.ResourceID != "" && (e.ResourceID == nil || *e.ResourceID != *q.ResourceID) {
+			continue
+		}
+		if q.From != nil && e.CreatedAt.Before(*q.From) {
+			continue
+		}
+		if q.To != nil && e.CreatedAt.After(*q.To) {
+			continue
+		}
+		cp := *e
+		items = append(items, &cp)
+	}
+	// Newest first, matching the repository contract.
+	sort.SliceStable(items, func(i, j int) bool {
+		if items[i].CreatedAt.Equal(items[j].CreatedAt) {
+			return items[i].ID > items[j].ID
+		}
+		return items[i].CreatedAt.After(items[j].CreatedAt)
+	})
+	return &domain.AuditPage{Items: items, Total: int64(len(items)), Page: q.Page, PageSize: q.PageSize}, nil
 }
 
 // --- helpers ---

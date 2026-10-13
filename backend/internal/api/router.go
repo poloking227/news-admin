@@ -137,6 +137,10 @@ func registerAdminRoutes(router *gin.Engine, deps Deps) {
 		handlers[[2]string{http.MethodPatch, "/users/:id/status"}] = userHandler.SetStatus
 		handlers[[2]string{http.MethodPost, "/users/:id/reset-password"}] = userHandler.ResetPassword
 	}
+	if deps.Audit != nil {
+		auditHandler := handler.NewAuditHandler(service.NewAuditService(deps.Audit))
+		handlers[[2]string{http.MethodGet, "/audit-logs"}] = auditHandler.List
+	}
 
 	for _, route := range authorize.AdminRoutes {
 		h, ok := handlers[[2]string{route.Method, route.Path}]

@@ -10,7 +10,7 @@ import (
 )
 
 // auditRow maps the audit_logs table. Before/After are JSONB columns that
-// GORM marshals from maps automatically. ActorName is joined from users.
+// GORM marshals from and into maps. ActorName is joined from users.
 type auditRow struct {
 	ID           int64          `gorm:"column:id;primaryKey"`
 	Actor        string         `gorm:"column:actor;type:uuid"`
@@ -18,8 +18,8 @@ type auditRow struct {
 	Action       string         `gorm:"column:action"`
 	ResourceType string         `gorm:"column:resource_type"`
 	ResourceID   *string        `gorm:"column:resource_id"`
-	Before       map[string]any `gorm:"column:before;type:jsonb"`
-	After        map[string]any `gorm:"column:after;type:jsonb"`
+	Before       map[string]any `gorm:"column:before;type:jsonb;serializer:json"`
+	After        map[string]any `gorm:"column:after;type:jsonb;serializer:json"`
 	IP           string         `gorm:"column:ip"`
 	CreatedAt    time.Time      `gorm:"column:created_at"`
 }

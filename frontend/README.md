@@ -24,10 +24,25 @@ Vue 3 管理端 + 浏览端（前后端分离，契约见仓库根 `docs/openapi
 pnpm install       # 安装依赖（Node 20+）
 pnpm dev           # 开发服务器 http://localhost:5173（/api 代理到 :8080）
 pnpm test          # 单测（Vitest）
+pnpm test:e2e      # 浏览器端到端（Playwright；首次先 pnpm exec playwright install chromium）
 pnpm lint          # ESLint 静态检查
-pnpm type-check    # vue-tsc 类型检查
+pnpm type-check    # vue-tsc + e2e tsconfig 类型检查
 pnpm build         # 类型检查 + 生产构建
 ```
+
+## 端到端测试（Playwright）
+
+`e2e/` 下的用例通过真实浏览器驱动完整前后端链路（登录/M0 强制改密/RBAC 门控/文章生命周期/浏览端可见性与搜索）。
+运行前需：本地 PostgreSQL 16（默认 `newsadmin/newsadmin_dev@localhost:5432`）、Node 20+、可构建的后端（Go）。
+首次运行会创建独立库 `news_admin_e2e`，数据库角色需具备建库权限（如无，请以超级用户执行一次
+`ALTER ROLE newsadmin CREATEDB;`，或通过 `E2E_DATABASE_URL` 指向已建好的库）。
+
+```bash
+pnpm exec playwright install chromium   # 首次安装浏览器
+pnpm test:e2e
+```
+
+启动时 webServer 会依次执行：重建独立库 `news_admin_e2e`（`backend/cmd/e2e prep`）→ `go run ./cmd/migrate up` → `backend/cmd/e2e seed`（三账号写入已知首登口令且 `must_change_password=true`）→ 启动后端 `:8080` → Vite `:5173`；用例串行执行，运行产物在 `test-results/` 与 `playwright-report/`（已 gitignore）。
 
 ## 目录约定（docs/architecture.md 模块边界）
 

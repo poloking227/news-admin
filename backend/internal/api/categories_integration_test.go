@@ -281,18 +281,28 @@ func TestCategoryEditorForbidden403(t *testing.T) {
 	router := categoriesRouter(t, users, newFkCategoryRepo(), newTFakeAudit())
 	token := rbacToken(t, "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa2", domain.RoleEditor)
 
-	for _, method := range []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodDelete} {
-		req := httptest.NewRequest(method, "/api/v1/admin/categories", nil)
+	// The taxonomy read is shared by every authoring role (the article editor
+	// lists categories while authoring); mutations remain admin-only.
+	if rec := categoriesAuthorizedRequest(router, http.MethodGet, "/api/v1/admin/categories", token); rec.Code != http.StatusOK {
+		t.Errorf("editor GET categories: status = %d, want 200 (taxonomy read)", rec.Code)
+	}
+	for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodDelete} {
+		rec := categoriesAuthorizedRequest(router, method, "/api/v1/admin/categories", token)
 		if method == http.MethodPut || method == http.MethodDelete {
-			req.URL.Path = "/api/v1/admin/categories/x"
+			rec = categoriesAuthorizedRequest(router, method, "/api/v1/admin/categories/x", token)
 		}
-		req.Header.Set("Authorization", "Bearer "+token)
-		rec := httptest.NewRecorder()
-		router.ServeHTTP(rec, req)
 		if rec.Code != http.StatusForbidden {
 			t.Errorf("editor %s categories: status = %d, want 403", method, rec.Code)
 		}
 	}
+}
+
+func categoriesAuthorizedRequest(router http.Handler, method, path, token string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(method, path, nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	return rec
 }
 
 func TestCategoryPublicListAnonymous(t *testing.T) {

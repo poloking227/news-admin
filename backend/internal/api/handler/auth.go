@@ -19,6 +19,10 @@ const (
 	csrfCookie    = "csrf_token"
 	csrfHeader    = "X-CSRF-Token"
 	authPath      = "/api/v1/auth"
+	// csrfPath keeps the double-submit cookie readable from every page: the
+	// SPA reads it via document.cookie when restoring a session after a
+	// reload, which only works when the cookie is scoped to the site root.
+	csrfPath = "/"
 )
 
 // AuthHandler exposes the /auth/* endpoints.
@@ -172,13 +176,13 @@ func (h *AuthHandler) setAuthCookies(c *gin.Context, session *service.Session) {
 	maxAge := int(auth.RefreshTTL.Seconds())
 	c.SetSameSite(http.SameSiteStrictMode)
 	c.SetCookie(refreshCookie, session.RefreshJTI, maxAge, authPath, "", h.secure, true)
-	c.SetCookie(csrfCookie, session.CSRF, maxAge, authPath, "", h.secure, false)
+	c.SetCookie(csrfCookie, session.CSRF, maxAge, csrfPath, "", h.secure, false)
 }
 
 func (h *AuthHandler) clearAuthCookies(c *gin.Context) {
 	c.SetSameSite(http.SameSiteStrictMode)
 	c.SetCookie(refreshCookie, "", -1, authPath, "", h.secure, true)
-	c.SetCookie(csrfCookie, "", -1, authPath, "", h.secure, false)
+	c.SetCookie(csrfCookie, "", -1, csrfPath, "", h.secure, false)
 }
 
 func csrfFromCookies(c *gin.Context) string {

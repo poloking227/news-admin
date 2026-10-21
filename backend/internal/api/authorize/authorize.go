@@ -22,7 +22,8 @@ type AdminRoute struct {
 //
 //	articles:   create|update|soft_delete|submit (editor+admin),
 //	            approve|reject|unpublish|pin (reviewer+admin)
-//	categories: manage (admin)
+//	categories: list (articles:read — every authoring role needs the taxonomy),
+//	            create|update|delete (manage, admin)
 //	users:      manage (admin)
 //	audit-logs: read (admin)
 var AdminRoutes = []AdminRoute{
@@ -38,8 +39,9 @@ var AdminRoutes = []AdminRoute{
 	{Method: http.MethodPost, Path: "/articles/:id/unpublish", Permission: domain.PermArticleUnpublish},
 	{Method: http.MethodPut, Path: "/articles/:id/pin", Permission: domain.PermArticlePin},
 
-	// Categories: admin only.
-	{Method: http.MethodGet, Path: "/categories", Permission: domain.PermCategoriesManage},
+	// Categories: the taxonomy read is shared by every authoring role so the
+	// article editor can list categories; mutations stay admin-only.
+	{Method: http.MethodGet, Path: "/categories", Permission: domain.PermArticleRead},
 	{Method: http.MethodPost, Path: "/categories", Permission: domain.PermCategoriesManage},
 	{Method: http.MethodPut, Path: "/categories/:id", Permission: domain.PermCategoriesManage},
 	{Method: http.MethodDelete, Path: "/categories/:id", Permission: domain.PermCategoriesManage},

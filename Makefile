@@ -1,4 +1,4 @@
-.PHONY: up down logs migrate-up migrate-down dev-back dev-front test-back test-front lint fmt build
+.PHONY: up down logs migrate-up migrate-down dev-back dev-front test-back test-front test-e2e lint fmt build
 
 up: ## 启动本地 PostgreSQL
 	docker compose up -d
@@ -24,8 +24,11 @@ dev-front: ## 启动前端开发服务器
 test-back: ## 运行后端测试
 	cd backend && go test ./...
 
-test-front: ## 运行前端测试
+test-front: ## 运行前端单元测试
 	cd frontend && pnpm test
+
+test-e2e: ## 运行浏览器端到端测试（Playwright；需要本地 PostgreSQL 16 与 Chromium）
+	cd frontend && pnpm test:e2e
 
 lint: ## 前后端静态检查
 	cd backend && golangci-lint run ./...

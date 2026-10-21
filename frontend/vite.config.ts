@@ -13,6 +13,8 @@ export default defineConfig({
   },
   server: {
     port: 5173,
+    // E2E 依赖固定端口（webServer 探测），端口被占用时直接报错而非漂移
+    strictPort: true,
     proxy: {
       // 契约基路径 /api/v1，本地开发代理到后端 :8080
       '/api': {
